@@ -7,8 +7,8 @@
 // Kịch bản viết kiểu Cucumber (bdd/features/*.feature) — `npm run bddgen` sinh test trước khi chạy.
 // Cấu hình DUY NHẤT cần sửa là khối CFG bên dưới — không sửa stage để bật/tắt tính năng.
 //
-// Plugin cần: Pipeline, Git, Credentials Binding, JUnit, HTML Publisher, Pipeline Utility Steps
-// (readJSON), Timestamper. Tuỳ chọn: Lockable Resources (androidLockLabel), Docker Pipeline (dockerImage).
+// Plugin cần: Pipeline, Git, Credentials Binding, JUnit, HTML Publisher, Timestamper.
+// Tuỳ chọn: Lockable Resources (androidLockLabel), Docker Pipeline (dockerImage).
 // =====================================================================================
 
 // Không có `def`: CFG phải là biến binding thì các hàm helper bên dưới mới thấy được.
@@ -391,7 +391,7 @@ pipeline {
             }
           }
 
-          def s = readJSON file: 'results/summary.json'
+          def s = new groovy.json.JsonSlurperClassic().parseText(readFile('results/summary.json'))
           currentBuild.description = "${params.ENV.toUpperCase()} · ${params.PROJECT}<br/>" +
             "TOTAL ${s.total} · pass ${s.passed} · fail ${s.failed} · skip ${s.skipped} · known-bug ${s.knownIssue} · flaky ${s.flaky}<br/>" +
             "<a href='${env.REPORT_URL}'>Report</a>" + (env.SCREENSHOT_URL ? " · <a href='${env.SCREENSHOT_URL}'>Screenshot</a>" : '')
