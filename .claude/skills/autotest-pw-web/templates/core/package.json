@@ -1,0 +1,37 @@
+{
+  "name": "automation-test",
+  "private": true,
+  "scripts": {
+    "bddgen": "bddgen",
+    "steps": "bddgen export",
+    "dd:sync": "tsx support/dd-sync.ts",
+    "test": "bddgen && playwright test",
+    "test:web": "bddgen && playwright test --project=web-chromium",
+    "test:api": "bddgen && playwright test --project=api",
+    "test:android": "bddgen && playwright test --project=android --workers=1",
+    "test:smoke": "bddgen && playwright test --grep @smoke",
+    "test:serial": "bddgen && playwright test --workers=1",
+    "update-snapshots": "bddgen && playwright test --grep @visual --update-snapshots",
+    "typecheck": "tsc --noEmit -p .",
+    "report": "playwright show-report results/html-report",
+    "report:monocart": "monocart show-report results/monocart-report/index.html",
+    "summary": "tsx ci/summarize.ts",
+    "ci:collage": "tsx ci/collage.ts",
+    "ci:notify": "tsx ci/notify.ts",
+    "ci:catalog": "tsx ci/tc-catalog.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.59.1",
+    "playwright": "1.59.1",
+    "playwright-bdd": "9.2.1",
+    "typescript": "5.9.3",
+    "@types/node": "26.6.4",
+    "dotenv": "18.0.6",
+    "tsx": "4.23.15",
+    "exceljs": "4.4.0",
+    "monocart-reporter": "2.13.1"
+  }
+}

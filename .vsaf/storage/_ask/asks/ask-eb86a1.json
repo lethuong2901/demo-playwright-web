@@ -1,0 +1,21 @@
+{
+  "askId": "ask-eb86a1",
+  "kind": "ask",
+  "runId": null,
+  "type": "choice",
+  "question": "Bạn muốn làm gì tiếp?",
+  "context": "Jenkins đã có và đang chạy trên localhost:8080. Jenkinsfile Playwright đã sẵn sàng với CFG cơ bản (agent any, môi trường demoblaze, lịch 4h chiều). Chưa cấu hình Vops vì người dùng chưa có thông tin. Có thể validate Jenkinsfile, hướng dẫn tạo job, hoặc dừng lại thêm Vops sau.",
+  "options": [
+    "Validate Jenkinsfile",
+    "Hướng dẫn tạo job Jenkins",
+    "Xong - thêm Vops sau"
+  ],
+  "status": "pending",
+  "createdAt": "2026-10-22T08:43:38.119Z",
+  "expiresAt": "2026-10-22T09:13:38.119Z",
+  "nonce": "f4nmsiwk",
+  "messageRef": null,
+  "answer": null,
+  "rounds": 10,
+  "phoneClosed": true
+}

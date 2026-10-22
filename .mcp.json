@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "vsaf": {
+      "type": "stdio",
+      "command": "vsaf",
+      "args": [
+        "mcp"
+      ]
+    },
+    "gitnexus": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "gitnexus@latest",
+        "mcp"
+      ]
+    }
+  }
+}

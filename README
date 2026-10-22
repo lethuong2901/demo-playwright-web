@@ -1,0 +1,579 @@
+# AutoTest Skills
+
+> Bộ skill Claude Code cho automation test — **Robot Framework** và **Playwright TypeScript**. *(Tên cũ: RF AgentSkills — repo cũ `aut/rf-agentskills` nay là `aut/autotest-skills`; URL cũ vẫn tự chuyển sang URL mới.)*
+
+Bộ **Claude Code skills** cho phép Claude tự viết, chạy và debug automation test với 2 công nghệ, dùng chung tài liệu, kịch bản và credential:
+
+| Công nghệ | Nền tảng | Skill |
+|---|---|---|
+| **Robot Framework** | Web, Android, iOS, REST API | `/autotest-rf-web` `/autotest-rf-android` `/autotest-rf-ios` `/autotest-rf-api` `/autotest-rf-jenkins` |
+| **Playwright TypeScript** (viết kiểu Cucumber — file `.feature` Gherkin) | Web, Android, REST API | `/autotest-pw-web` `/autotest-pw-android` `/autotest-pw-api` `/autotest-pw-jenkins` |
+
+Bạn nói yêu cầu bằng ngôn ngữ tự nhiên. Claude tự đọc tài liệu, viết test, chạy và báo kết quả.
+
+**Quy ước tên skill:** `autotest-rf-*` = Robot Framework · `autotest-pw-*` = Playwright TypeScript · không có tiền tố (`autotest-project-docs`, `autotest-scenarios`, `autotest-strategy`, `autotest-credentials`) = dùng chung cho cả hai.
+
+> **Đổi tên (10/2026):** các skill Robot Framework trước đây không có tiền tố (`/autotest-web`, `/autotest-android`, `/autotest-ios`, `/autotest-api`, `/autotest-jenkins`, `/autotest-results`, `autotest-db`, `autotest-mcp-assist`, `autotest-*-best-practices`) nay là `autotest-rf-*`. Project đã cài bản cũ: chạy lại `vsaf install autotest-skill`, rồi xoá các thư mục tên cũ trong `.claude/skills/` **và `.cursor/skills/`** (vsaf cài skill cho cả 2 công cụ — vd `.claude/skills/autotest-web/`) để không còn 2 bản song song.
+
+Chạy được trên **macOS** và **Windows**.
+
+### Nên dùng IDE nào?
+
+| Công nghệ | IDE khuyến nghị | Vì sao |
+|---|---|---|
+| **Robot Framework** (`/autotest-rf-web\|android\|ios\|api`) | **PyCharm** | Hệ sinh thái Python/Robot (interpreter, `robot`/`robotidy`, plugin Robot Framework), quen thuộc với team QC Python. |
+| **Playwright TypeScript** (`/autotest-pw-web\|android\|api`) | **VSCode** | Hợp Node/TypeScript: extension *Playwright Test for VSCode*, *Cucumber (Gherkin)*, chạy/debug `.feature` + `.spec` ngay trong editor. |
+
+> Dùng IDE nào cũng chạy test được (Claude Code thao tác qua terminal). Khuyến nghị trên chỉ để trải nghiệm chỉnh sửa/debug tốt nhất cho từng công nghệ.
+
+
+## Cài đặt
+
+Cài tất cả skill **qua VSAF** (kéo từ Skill Hub).
+
+**1. Cài VSAF:**
+
+```bash
+npm i -g @trungtamcongnghedigital/vsaf   # cài VSAF bản mới nhất
+vsaf --version                           # kiểm tra đã cài thành công
+```
+
+**2. Khai nguồn một lần cho máy** — thêm vào `~/.vsaf/registry.yaml` (Windows: `C:\Users\<user>\.vsaf\registry.yaml`):
+
+```yaml
+autotest-skill:
+  repo: http://bitbucket.digital.vn/scm/aut/autotest-skills.git
+  branch: master
+```
+
+> Máy đã khai URL cũ `…/aut/rf-agentskills.git`: vẫn cài được (Bitbucket tự chuyển sang repo mới), nhưng nên sửa sang URL trên.
+
+**3. Cài vào project:**
+
+```bash
+cd /path/to/your-project
+vsaf install autotest-skill              # kéo skill + workflow về project — KHÔNG cần vsaf init
+```
+
+- **Cập nhật** lên bản mới nhất: chạy lại `vsaf install autotest-skill`
+- Skill được tải từ **Skill Hub** (`https://skillhub.viettel.digital`, namespace `autotest`, công khai — không cần đăng nhập). Cả 20 skill (RF + Playwright) đều có trên Hub.
+- **Workflow làm thẳng trong project:** project chưa có `.vsaf/` thì lượt cài tự đặt `isolation: type: none` trong `.vsaf/config.yaml` (+ thêm `.vsaf/artifacts/` vào `.gitignore`). Project **đã có** `.vsaf/` (vd dùng chung bộ SDLC) thì lượt cài chỉ cảnh báo, không sửa — muốn làm thẳng trong project thì tự đổi `isolation: type:` thành `none`. Với `ephemeral` (mặc định của `vsaf init`), workflow làm trong thư mục tạm và file chỉ về project khi **xong cả lượt** — bước điền `automation_test/.env` khi đó phải sửa file trong thư mục tạm. Chạy skill lẻ (`/autotest-*`) không bị ảnh hưởng.
+
+**4. Cài RobotMCP** (bắt buộc cho `/autotest-rf-web`/`/autotest-rf-android`/`/autotest-rf-ios`) — verify locator qua live session. Cài 1 lần cho project rồi **mở phiên Claude Code mới**:
+
+```bash
+uv tool install "rf-mcp[all]"                     # hoặc [web] / [mobile] theo platform
+robotmcp install --agents all --scope project -C . --yes
+```
+
+> Chưa cài mà đã gọi skill cũng được — skill tự cài rồi báo bạn mở session mới. Bộ Playwright (`/autotest-pw-*`) không cần cài gì trước.
+
+---
+
+## Quy trình 5 bước
+
+```
+Bước 1  /autotest-project-docs                                          Tạo tài liệu domain knowledge
+Bước 2  /autotest-scenarios                                             Tạo kịch bản kiểm thử
+Bước 3  /autotest-strategy                                              Phân tích + tinh chỉnh kịch bản
+Bước 4  /autotest-rf-web /autotest-rf-android /autotest-rf-ios /autotest-rf-api   Viết automation test (Robot Framework)
+        /autotest-pw-web /autotest-pw-android /autotest-pw-api           hoặc Playwright TypeScript (Cucumber)
+Bước 5  /autotest-rf-jenkins                                            Thiết lập CI/CD pipeline (Robot Framework)
+        /autotest-pw-jenkins                                            hoặc pipeline cho Playwright
+```
+
+Bước 1–3 dùng chung cho cả 2 công nghệ. `/autotest-strategy` luôn hỏi bạn chọn Robot Framework hay Playwright (bắt buộc trả lời — project đã có code thì chỉ gợi ý giữ công cụ cũ).
+
+### Chạy full luồng hay từng bước?
+
+- **Chạy full 5 bước** — qua VSAF workflow:
+  ```
+  vsaf autotest-skill/automation-test <yêu cầu>       # Robot Framework hoặc Playwright TypeScript
+  ```
+  **Công cụ luôn do bạn chọn:** ghi luôn trong yêu cầu (vd "… bằng playwright") thì workflow dùng theo đó; không ghi thì workflow hỏi (dòng `Tool:` trong strategy và code có sẵn chỉ dùng làm gợi ý, không tự chốt). Playwright không có iOS, Android đang thử nghiệm.
+
+- **Chỉ 1 bước** — gọi thẳng skill lẻ:
+  ```
+  /autotest-project-docs <yêu cầu>
+  /autotest-scenarios <yêu cầu>
+  /autotest-strategy <yêu cầu>
+  /autotest-rf-web <yêu cầu>          # hoặc /autotest-rf-android / /autotest-rf-ios / /autotest-rf-api
+  /autotest-pw-web <yêu cầu>       # hoặc /autotest-pw-android / /autotest-pw-api
+  /autotest-rf-jenkins <yêu cầu>      # hoặc /autotest-pw-jenkins
+  ```
+
+---
+
+## Bước 1 — Tạo tài liệu domain knowledge
+
+```
+/autotest-project-docs tạo tài liệu cho project viettelmoney
+```
+
+Skill hỏi bạn chọn nguồn tài liệu:
+
+**1 — Từ Confluence** — paste link, skill tự fetch toàn bộ trang và trang con, phân loại và lưu vào đúng chỗ. Token Confluence đọc từ `~/.vds/sdlc-config.env` (dùng chung với VSAF Skill Pack/PQA): lần đầu chưa có, skill tạo sẵn file kèm đúng tên key cho host Confluence của bạn (vd `VDS_CONFLUENCE_10_254_136_35_TOKEN`) và chỉ bạn điền — **không hỏi token trong chat**. Điền TOKEN (Personal Access Token) **hoặc** USER + PASSWORD đều được.
+
+**2 — Từ file hoặc text** — paste nội dung vào chat, hoặc cho đường dẫn file (`.md`, `.txt`, `.pdf`, `.docx`). Truyền nhiều tài liệu liên tiếp, skill tự phân loại.
+
+**3 — AI tự tạo** — trả lời 5 câu hỏi (mô tả sản phẩm, URL, xác thực, tính năng chính...), skill tạo các file cần thiết.
+
+Nếu đã có tài liệu → hỏi: **Cập nhật thêm** hay **Tạo lại hoàn toàn**.
+
+Output: `automation_test/docs/` — file chung (`global-data.md`, `product-overview.md`, `api-reference.md`) nằm ngay trong `automation_test/docs/`, file riêng theo chức năng nằm trong `automation_test/docs/features/<feature>/`.
+
+---
+
+## Bước 2 — Tạo kịch bản kiểm thử
+
+```
+/autotest-scenarios viết kịch bản cho chức năng đăng nhập
+/autotest-scenarios                                          ← hỏi bạn muốn làm gì
+```
+
+**Nếu chưa có kịch bản:**
+
+**1 — AI tự viết từ tài liệu** — phân tích theo 6 góc nhìn (Happy Path, Business Rules, Security, Negative, Edge Cases, UI State), cộng thêm kỹ thuật thiết kế (Equivalence Partitioning, Boundary Value Analysis, Use Case/Flow Testing, Decision Table, State Transition, Pairwise, Error Guessing) và checklist mở rộng theo đặc điểm feature (cross-field, concurrency, rollback, permission matrix, pagination, đặc thù tiếng Việt) → hiện danh sách để duyệt → lưu file.
+
+Trước khi viết TC, skill tự làm nhiều việc để đảm bảo TC đúng, đủ và chất lượng:
+- **Đối chiếu tài liệu** — so `business-scenario.md` với `detail-design.md`, phát hiện mâu thuẫn/thiếu nhất quán/logic issue/completeness gap → hỏi bạn chọn nguồn đúng trước khi viết TC liên quan, ghi lại quyết định để áp dụng nhất quán.
+- **Không tự đoán** — tài liệu thiếu thông tin (vd chưa nêu giới hạn ký tự, chưa liệt kê hết mã lỗi) → hỏi bạn thay vì tự bịa. Nếu cả tài liệu trống hoàn toàn (không phải thiếu 1 chi tiết lẻ tẻ) → dừng hẳn, hỏi lại nguồn tài liệu thay vì tự dựng cả kịch bản từ suy đoán tên feature.
+- **Mỗi TC có nguồn trích dẫn** (field `Source`) — trỏ đúng về đoạn tài liệu làm căn cứ, dễ verify lại khi cần.
+- **Priority/Severity theo công thức risk** (Likelihood × Impact) thay vì gán cảm tính.
+- **Review checklist trước khi lưu** — Steps/Expected Results khớp 1-1, không dữ liệu chung chung, không trùng test data/TC rỗng/trùng rule, TC anchor cho mỗi màn hình mới.
+- **Học tích luỹ qua các lần chạy** — lưu vào `automation_test/docs/scenario-learnings.md`, đọc lại ở đầu mỗi lần chạy sau để không lặp lỗi thiết kế cũ.
+- **Audit độc lập trước khi lưu** — một agent riêng (context mới) rà lại từng dòng tài liệu gốc để tìm case còn sót: từng thuộc tính của control (multi-select, tìm kiếm nhanh, trim...), nhánh lỗi/timeout của từng luồng ở cả UI lẫn API, tổ hợp điều kiện lọc, sửa/xoá đồng thời. Case có căn cứ trong tài liệu được bổ sung luôn.
+- **File TC tham chiếu (tuỳ chọn)** — khi tạo file mới, bạn có thể đưa thêm bộ KBKT của team khác (Excel/md) để đối chiếu độ phủ. Case chỉ có trong file tham chiếu mà tài liệu không nêu → skill hỏi bạn thêm hay bỏ, case được thêm ghi vào `doc-gaps.md` để BA bổ sung tài liệu.
+- **Ghi lại chỗ tài liệu thiếu/mâu thuẫn** vào `automation_test/docs/features/<feature>/doc-gaps.md` (mã `AMB-NN`) — gửi lại BA/dev.
+
+**2 — Convert từ Excel** — cho đường dẫn file Excel → preview 3 TC đầu để xác nhận mapping → lưu file → rà theo checklist chất lượng (Steps/Expected 1-1, dữ liệu chung chung, trùng test data, TC rỗng, trùng rule) và **báo cáo cho bạn xác nhận trước** thay vì tự sửa (khác Mode A — nội dung Excel do người khác viết, sửa mà không hỏi có thể sai lệch ý đồ gốc).
+
+**Nếu đã có kịch bản:**
+
+Hỏi: Thêm TC mới / Sửa TC / Xoá TC / Tạo lại hoàn toàn.
+
+Output: `automation_test/docs/features/<feature>/test-cases.md`
+
+---
+
+## Bước 3 — Phân tích và tinh chỉnh kịch bản
+
+```
+/autotest-strategy phân tích kịch bản đăng nhập
+/autotest-strategy                                           ← hỏi bạn muốn làm gì
+```
+
+Đọc domain knowledge + kịch bản kiểm thử, sau đó:
+
+- **Viết tài liệu chiến lược** (`automation_test/docs/features/<feature>/strategy.md`): scope automation, phát hiện TC cần gộp/tách, ước tính effort, câu hỏi cần xác nhận với khách hàng, lịch CI/CD.
+- **Đề xuất điều chỉnh TC** nếu cần: gộp TC sequential, tách data-driven, làm rõ steps mơ hồ, flag mâu thuẫn với tài liệu.
+- **Chờ xác nhận** trước khi sửa bất kỳ TC nào.
+
+Nếu đã có strategy file → hỏi: **Cập nhật** (chỉ điền thêm) hay **Tạo lại hoàn toàn**.
+
+---
+
+## Bước 4 — Viết automation test
+
+```
+/autotest-rf-web viết test cho chức năng đăng nhập
+/autotest-rf-android sửa TC-003 của màn hình chuyển tiền
+/autotest-rf-ios refactor phần giỏ hàng
+/autotest-rf-api viết test cho tất cả API của order
+```
+
+Skill đọc TC file → viết test theo chuẩn FOM/AOM → chạy → debug → báo kết quả.
+
+| Skill | Platform |
+|---|---|
+| `/autotest-rf-web` | Web (SeleniumLibrary) |
+| `/autotest-rf-android` | Android (Appium + UiAutomator2) |
+| `/autotest-rf-ios` | iOS (Appium + XCUITest) |
+| `/autotest-rf-api` | REST API (RequestsLibrary) |
+
+`/autotest-rf-android` và `/autotest-rf-ios` chạy được trên thiết bị/simulator local **hoặc** device farm MCloud (skill hỏi `FARM_URL`; `FARM_USERNAME`/`FARM_ACCESS_KEY` bạn tự điền vào `automation_test/.env` — device farm tự cấp thiết bị nên không cần khai UDID).
+
+Trước khi chạy test, skill kiểm tra credential TC cần (tài khoản login, DB, farm...). Còn thiếu → skill dừng bước chạy và in đúng các dòng cần điền trong `automation_test/.env`; các bước khác (viết keyword, locator) vẫn làm tiếp. Điền xong gõ "xong" để skill kiểm tra lại.
+
+Nếu TC đề cập đến database (verify DB, seed data, reset state...), skill tự detect và kích hoạt **autotest-rf-db** — không cần làm gì thêm. Skill hỗ trợ MariaDB/MySQL/PostgreSQL/MSSQL/SQLite, query, assert, transaction, async wait, multi-alias, SSH tunnel.
+
+### Bước 4 với Playwright TypeScript (kiểu Cucumber)
+
+```
+/autotest-pw-web viết test cho chức năng giỏ hàng
+/autotest-pw-api viết test API đơn hàng
+/autotest-pw-android sửa TC-010 của màn hình đăng nhập
+/autotest-pw-web refactor phần checkout
+/autotest-pw-web xoá TC-005 của login
+```
+
+Mỗi TC thủ công thành một **Scenario** trong file `.feature`, câu chữ bám đúng TC:
+
+```gherkin
+# Chạy (trong automation_test/): npx bddgen && npx playwright test --project=web-chromium --headed --grep @cart
+@web @cart
+Feature: Giỏ hàng
+
+  @TC-003 @regression @auth:webUser
+  Scenario: TC-003 — Thêm sản phẩm vào giỏ cập nhật số lượng
+    Given người dùng đã đăng nhập
+    When người dùng thêm sản phẩm "ZARA COAT 3" vào giỏ
+    Then icon giỏ hàng hiển thị số lượng 1
+```
+
+> Cấu trúc **phẳng**: mọi `.feature` ở `bdd/features/`, mọi step ở `bdd/steps/` (không có thư mục con theo platform). Mỗi project lọc test theo **tag** `@web`/`@api`/`@android` ở đầu Feature.
+
+Phần code TypeScript đi kèm:
+
+- **Step** (`bdd/steps/<feature>.steps.ts`) — mỗi step chỉ vài dòng, import từ `./bdd`, gọi object.
+- **Web — page object** — quản lý qua `POManager` giống khoá học (`poManager.getLoginPage()`), chia theo **page** (`pages/<feature>/<Name>Page.ts`).
+- **Android — function object** — chia theo **chức năng** (app nhiều màn): mỗi object gói trọn 1 function trải nhiều màn, quản lý qua `FunctionManager` (`functionManager.getTransferFunction()`), ở `functions/<feature>/<Name>Function.ts`.
+- **Lớp API** — dùng để tạo/dọn dữ liệu (preset) và bỏ qua màn đăng nhập; có sẵn trong mọi project (web/android/api).
+
+| Skill | Nền tảng | Cách chạy |
+|---|---|---|
+| `/autotest-pw-web` | Web (Chromium; thêm Firefox/WebKit/mobile web khi cần) | Playwright Test |
+| `/autotest-pw-api` | REST API — dùng riêng, hoặc làm lớp API cho test web/Android. Có **data-driven bằng CSV** giống Robot Framework (Mode D) | Playwright `request` |
+| `/autotest-pw-android` | Android: màn hình native, WebView trong app, Chrome — máy cắm USB/emulator **hoặc device farm MCloud** | Playwright `_android` qua ADB (không cần Appium). Không hỗ trợ iOS — iOS dùng `/autotest-rf-ios` |
+
+Đã có sẵn ví dụ chạy được cho các kỹ thuật của khoá học, skill bám theo khi viết. Danh sách đầy đủ ở `autotest-pw-web/references/web-best-practices.md` §0.
+
+- **Thao tác giao diện:** dropdown, radio, checkbox, tab mới (child window), locator đặc biệt (`getByLabel`/`getByRole`/`filter`), ghi đè timeout.
+- **Kiểm tra nâng cao:** điều hướng back/forward/reload, alert/confirm (OK và Cancel), hover, iframe.
+- **Ảnh:** chụp màn hình làm bằng chứng, so sánh với ảnh chuẩn.
+- **File:** upload/download kèm sửa Excel.
+- **Đăng nhập không qua UI:** lấy token qua API, hoặc đăng nhập một lần rồi tái dùng phiên (tag `@auth:<role>`).
+- **Mạng:** chặn hoặc giả lập response.
+- **API data-driven (Mode D, giống Robot Framework):** dữ liệu ở `data/api/<feature>.csv`, mỗi dòng 1 TC (`tc, title, method, url, request_body, response_status_code, response_body, auth, tags`), mở bằng Excel được. `npm run dd:sync` sinh `bdd/features/<feature>.dd.feature` — không viết code cho từng TC. Hỗ trợ sinh dữ liệu lúc chạy `INPUT_DATA:uuid|timestamp|number:<n>|string:<n>`, so khớp một phần response (kể cả mảng). Skill phân tích TC rồi hỏi chọn Mode A (Scenario) hay Mode D (CSV).
+
+Chạy tay (trong `automation_test/`):
+
+```bash
+npx bddgen && npx playwright test --project=web-chromium --headed --grep "@TC-003\b"   # 1 TC
+npm run test:serial                                                         # cả bộ, chạy tuần tự
+npm run update-snapshots                                                    # tạo lại ảnh chuẩn (TC @visual)
+```
+
+Song song hay tuần tự: skill hỏi lúc dựng dự án. Muốn đổi sau thì đặt biến `RUN_MODE=parallel|serial` và `WORKERS`. Android luôn chạy 1 worker.
+
+**Android trên device farm MCloud** — chỉ có **một cách**, bạn chỉ làm 2 việc:
+
+1. **Điền tài khoản Keycloak device farm một lần** (tài khoản riêng của device farm, do DevOps Trung tâm Vận hành Khai thác cấp, không phải SSO; mỗi người một tài khoản) vào `~/.vds/sdlc-config.env`: `VDS_STF_<HOST>_USER=` và `VDS_STF_<HOST>_PASSWORD=` (vd host `10.207.247.201` → `VDS_STF_10_207_247_201_USER`). Skill tự thêm sẵn 2 dòng key; dùng tài khoản **không bật OTP/2FA** (cần thì dùng tài khoản dịch vụ).
+2. **Đưa link control máy**, vd `ANDROID_DEVICE_URL=http://10.207.247.201/#!/control/<serial>`.
+
+**Mỗi người dùng tài khoản Keycloak device farm của riêng mình.** Máy đang do tài khoản khác giữ thì skill không chiếm mà gợi ý máy đang rảnh. Không hỗ trợ dùng chung tài khoản: khác điện thoại thì vẫn chạy được, nhưng hai máy tính cùng tài khoản chọn cùng một điện thoại sẽ chạy chồng lên nhau. Không cần cài `adb` hay Android SDK trước: máy chưa có thì skill tự tải Android platform-tools chính thức của Google. Skill tự làm phần còn lại: đăng nhập → **tự đăng ký ADB key** vào tài khoản của bạn (không phải dán key trên web, không bấm "Allow USB debugging") → mượn máy → bật remote debug → `adb connect` → chạy → trả máy. Kết nối dùng **adb server riêng (cổng 5038)**, không đụng adb server mặc định của máy, nên Android Studio, Appium hay lượt test khác không làm rớt kết nối farm.
+
+**ADB key:** skill dùng key mặc định `~/.android/adbkey` (Windows: `%USERPROFILE%\.android\adbkey`), tự tạo nếu chưa có, tự đăng ký vào tài khoản farm rồi kiểm tra lại. Key mặc định đã thuộc tài khoản farm khác thì skill tự dùng key riêng. Chỉ khi đã thử hết mà vẫn không kết nối được, skill mới in hướng dẫn thêm key bằng tay đúng hệ điều hành của bạn:
+
+| Hệ điều hành | Tạo key và chép public key |
+|---|---|
+| Windows (Command Prompt) | `cd %USERPROFILE%\.android\` → `adb keygen adbkey` → `adb pubkey %USERPROFILE%\.android\adbkey > %USERPROFILE%\.android\adbkey.pub` → `type %USERPROFILE%\.android\adbkey.pub \| clip` |
+| macOS | `cd ~/.android/` → `adb keygen adbkey` → `adb pubkey ~/.android/adbkey > ~/.android/adbkey.pub` → `pbcopy < ~/.android/adbkey.pub` |
+| Linux | như macOS, bước cuối `xclip -sel clip < ~/.android/adbkey.pub` |
+
+Sau đó dán vào `http://<farm>/#!/settings/keys` → ADB Keys (đăng nhập đúng tài khoản farm trong `~/.vds/sdlc-config.env`) rồi chạy lại.
+
+Lưu ý khi tự kiểm tra: `adb connect` in ra `failed to authenticate …` là **bình thường**. Đã kết nối chỉ khi trạng thái là `device`. Kết nối của skill nằm trên adb server riêng, xem bằng `adb -P 5038 devices -l`. Lệnh `adb devices` thường hỏi server mặc định nên có thể thấy `offline` dù test vẫn chạy được.
+
+Kiểm tra cả chuỗi bằng một lệnh (nên chạy một lần khi dựng máy / agent Jenkins):
+
+```bash
+npx tsx support/stf.ts doctor "http://10.207.247.201"      # hoặc link control đầy đủ
+```
+
+Các file kết nối farm trong project (`automation_test/support/stf.ts`…) luôn tự theo bản skill đang cài: skill tự đồng bộ mỗi lần chạy, và chạy tay `npx playwright test` cũng tự cập nhật trước khi test (bản cũ lưu ở `results/backup/`). Cài lại skill là đủ, không phải sửa tay file nào. Máy farm rớt kết nối giữa chừng: test đó được chạy lại 1 lần trên kết nối mới (`ANDROID_RETRIES`).
+
+Lệnh dừng ngay ở bước hỏng và nói rõ phải sửa gì (thiếu tài khoản, sai mật khẩu / tài khoản bật OTP, farm từ chối…). Đã kiểm chứng end-to-end trên máy farm thật (Pixel 4 + Realme C21), kể cả khoá mới tinh và khoá đổi khi adb server cũ còn chạy. Trên Jenkins: tham số `ANDROID_DEVICE_URL` + tài khoản Keycloak device farm trong `~/.vds/sdlc-config.env` của user chạy agent.
+
+---
+
+## Xem kết quả test
+
+```
+/autotest-rf-results
+```
+
+Parse `automation_test/results/output.xml` → báo cáo pass/fail, thời gian chạy, lỗi chi tiết.
+
+```bash
+open automation_test/results/log.html      # trace từng bước
+open automation_test/results/report.html   # tổng hợp suite
+```
+
+**Playwright** — `/autotest-rf-results` chỉ đọc kết quả Robot Framework. Với Playwright, mọi report nằm chung trong `automation_test/results/`:
+
+| Report | Đường dẫn | Mở |
+|---|---|---|
+| Tóm tắt (pass/fail/known-bug/flaky + lỗi từng TC) | `results/summary.json` | `npm run summary` |
+| Playwright HTML (từng step, ảnh, video, trace) | `results/html-report/` | `npm run report` |
+| **Monocart** — cây suite → scenario → step, lọc theo tag, ảnh/video/trace đính kèm; tự sinh sau mỗi lần chạy | `results/monocart-report/index.html` | mở thẳng file, hoặc `npm run report:monocart` |
+| JUnit / JSON | `results/junit.xml`, `results/results.json` | — |
+
+---
+
+## Bước 5 — Thiết lập CI/CD (Jenkins)
+
+```
+/autotest-rf-jenkins tạo jenkinsfile cho project vtm_android
+/autotest-rf-jenkins thêm testcase TC99 vào account 84362579294
+/autotest-rf-jenkins thêm nhóm mới Thanh_toan
+/autotest-rf-jenkins đổi room vops
+/autotest-rf-jenkins đặt lịch chạy mỗi ngày 2h sáng
+```
+
+Skill hỏi config project/Git/Jenkins (1 message), rồi hỏi cấu trúc chọn TC trên Jenkins UI → tự tạo `Jenkinsfile` + script Python chạy kèm, không cần có sẵn file nào. Đã kiểm chứng trên Jenkins server thật, kể cả build tự bắn theo lịch cron.
+
+**Cập nhật sau đó**: thêm/xoá testcase, nhóm, tài khoản, parameter, lịch chạy... — luôn show diff trước khi ghi.
+
+**Tuỳ chọn thêm** (skill hỏi khi cần):
+
+- **Lịch chạy tự động** — mô tả bằng ngôn ngữ tự nhiên ("mỗi ngày 2h sáng"), skill tự quy đổi sang cron.
+- **Report S3/MinIO** — push report + screenshot lên storage, link hiện ngay trong Jenkins build.
+- **Thông báo Vops/Telegram** — tóm tắt kết quả kèm 1 ảnh gộp tất cả screenshot lỗi.
+
+Dùng chung cho cả 4 platform (`web`/`android`/`ios`/`api`).
+
+**Credential khi chạy trên Jenkins** — tài khoản test/DB/farm không nằm trong repo nên Jenkins cần lấy `automation_test/.env` theo 1 trong 2 cách (skill hỏi khi tạo Jenkinsfile):
+- **(a)** tạo sẵn `automation_test/.env` trong thư mục project trên máy agent (một lần — `git pull` không xoá file đã gitignore);
+- **(b)** upload nội dung `.env` lên Jenkins dạng *Secret file* credential, skill nối vào Jenkinsfile qua `AUTOTEST_ENV_FILE`.
+
+**Token Vops/Telegram và key MinIO không nằm trong code, không hỏi trong chat** — script đọc lúc chạy từ biến môi trường hoặc `~/.vds/sdlc-config.env` (`VDS_VOPS_TOKEN`, `VDS_VOPS_USER_ID`, `VDS_TELEGRAM_BOT_TOKEN`, `VDS_MINIO_ACCESS_KEY`, `VDS_MINIO_SECRET_KEY`). Trên Jenkins: điền file đó trên máy agent, hoặc tạo Jenkins credential rồi khai ID (skill hỏi). Đổi token = sửa file/credential, không sửa code. Tự tạo job qua Jenkins API: API user/token đọc từ `~/.vds/sdlc-config.env` (`VDS_JENKINS_<HOST>_USER` / `_TOKEN`).
+
+Output: `automation_test/Jenkinsfile`, `automation_test/config/<runner>.py`, `automation_test/python_lib/*.py`
+
+### Pipeline cho Playwright — `/autotest-pw-jenkins`
+
+```
+/autotest-pw-jenkins tạo pipeline jenkins
+/autotest-pw-jenkins thêm môi trường uat
+/autotest-pw-jenkins đặt lịch chạy 8h tối thứ 2-6, chỉ @regression
+/autotest-pw-jenkins bật Telegram
+```
+
+Cấu trúc mới, khác `/autotest-rf-jenkins`:
+
+- **Jenkinsfile có sẵn, chỉ điền cấu hình.** Skill copy file đã kiểm tra rồi điền khối `CFG` ở đầu, không sinh lại code. Mọi thay đổi sau này chỉ sửa khối này.
+- **Logic viết bằng TypeScript** (`ci/summarize.ts`, `ci/collage.ts`, `ci/notify.ts`), chạy thử được trên máy (`npm run summary`, `npx tsx ci/notify.ts --dry-run`).
+- **Token lấy từ Jenkins credentials**, không ghi vào repo. Skill chỉ hỏi ID credential (Vops, Telegram, MinIO, file `.env`).
+- **Tham số khi chạy:**
+  - `ENV`, `PROJECT` — môi trường và nền tảng.
+  - `FEATURES` — **tick chọn feature** (checkbox); `TC_LIST` — **tick từng TC** của các feature đã chọn. Danh sách tự sinh từ file `.feature` bằng `npm run ci:catalog` (các skill `autotest-pw-*` tự chạy sau khi thêm/sửa/xoá TC), không phải gõ tay. Cần plugin Active Choices.
+  - `TCS` — gõ tay mã TC, vd `TC-001, TC-003` (ưu tiên cao nhất, dùng khi gọi job qua API).
+  - `GREP` — lọc theo tag, vd `@smoke`.
+  - `WORKERS` — số worker; `1` là chạy tuần tự.
+  - `RETRIES`, `SHARDS` (chia nhiều agent).
+  - `APK_URL` — APK cần cài cho Android.
+  - `ANDROID_DEVICE_URL` — link control máy device farm MCloud (agent cần tài khoản Keycloak device farm trong `~/.vds/sdlc-config.env`); bỏ trống = máy cắm tại agent.
+- **Report:** JUnit, Playwright HTML, Monocart, đẩy lên MinIO. Build tự chuyển UNSTABLE khi có TC fail.
+- **Thông báo Vops/Telegram** giữ nguyên định dạng tin nhắn và ảnh gộp lỗi như trước.
+- **Android:** khoá thiết bị theo build (Lockable Resources).
+- **Tuỳ chọn:** tạo job Multibranch qua Jenkins API.
+
+Output: `automation_test/Jenkinsfile`, `automation_test/ci/notify.ts`, `automation_test/ci/tc-catalog.ts`
+
+---
+
+## Credential — tài khoản, token, mật khẩu
+
+Credential **không bao giờ** nằm trong repo hay trong chat. Có 2 file, cả hai do skill tạo sẵn (đủ tên key, value để trống) — bạn chỉ việc mở ra điền giá trị sau dấu `=`:
+
+| File | Chứa | Phạm vi |
+|---|---|---|
+| `automation_test/.env` | Tài khoản web/API/app, device farm, DB, SSH tunnel, TOTP, proxy | Theo project — gitignored |
+| `~/.vds/sdlc-config.env` (Windows: `C:\Users\<user>\.vds\sdlc-config.env`) | Credential công cụ: Confluence, Jenkins API, Vops/Telegram/MinIO (CI), device farm MCloud (STF) | Theo máy — dùng chung mọi project và VSAF Skill Pack (PQA) |
+
+Key chuẩn trong `automation_test/.env` (nhóm không dùng thì để trống):
+
+```
+WEB_USERNAME=  WEB_PASSWORD=                 # /autotest-rf-web
+API_USERNAME=  API_PASSWORD=  API_KEY=       # /autotest-rf-api
+APP_USERNAME=  APP_PASSWORD=                 # /autotest-rf-android, /autotest-rf-ios
+FARM_USERNAME= FARM_ACCESS_KEY=              # device farm MCloud
+DB_USER=       DB_PASS=                      # TC có DB (autotest-rf-db)
+DB_TUNNEL_SSH_USER=  DB_TUNNEL_SSH_KEY=      # DB qua SSH tunnel (KEY = đường dẫn file private key)
+TOTP_SECRET=                                 # TC có OTP dạng TOTP
+PROXY_USERNAME= PROXY_PASSWORD=              # proxy công ty cần đăng nhập
+```
+
+- TC cần nhiều tài khoản theo vai trò → skill tự thêm key dạng `WEB_ADMIN_USERNAME`, `APP_VIEWER_PASSWORD`...
+- Bộ Playwright đọc **cùng file** `automation_test/.env` với cùng tên key (qua `config/env.ts`); trên Jenkins dùng Secret file `AUTOTEST_ENV_FILE` như bộ RF.
+- Chạy tạm với giá trị khác mà không sửa file: đặt biến môi trường cùng tên trước lệnh `robot` / `npx playwright test` (macOS: `API_PASSWORD=... robot ...`; PowerShell: `$env:API_PASSWORD="..."; robot ...`). Biến môi trường luôn thắng giá trị trong `.env`.
+- Lỡ dán mật khẩu/token vào chat → skill không dùng giá trị đó; nên đổi mật khẩu/revoke token vì nó đã nằm trong lịch sử chat.
+- Không có ngoại lệ, và không truyền credential qua tham số dòng lệnh (lộ trong `ps`, lịch sử shell). Lệnh skill chạy kèm credential đi qua `cred_env.py run`, output được che giá trị (`***`).
+- Project cũ còn mật khẩu nằm trong `global-data.md` / `common_variables.resource` / YAML → skill phát hiện (không in giá trị), nhắc bạn chuyển sang `.env` rồi mới xoá bản cũ.
+
+---
+
+## Dùng trên Windows
+
+Toàn bộ skill và file cài chạy được trên Windows. Claude Code trên Windows chạy lệnh qua **Git Bash** (cài kèm Git for Windows), nên lệnh trong skill dùng được nguyên văn; skill tự đổi `python3` → `python`/`py -3`. Khác biệt chỉ gặp khi **bạn tự gõ lệnh trong PowerShell**:
+
+| macOS / Linux / Git Bash | Windows PowerShell |
+|---|---|
+| `python3 ...` | `python ...` (hoặc `py -3 ...`) |
+| `lệnh1 && lệnh2` | `lệnh1; lệnh2` (PowerShell 5.1 không có `&&`) |
+| `API_PASSWORD=... robot ...` | `$env:API_PASSWORD="..."; robot ...` |
+| `open automation_test/results/log.html` | `start automation_test\results\log.html` |
+| `bash /path/to/autotest-skills/install.sh` | `powershell -ExecutionPolicy Bypass -File C:\path\to\autotest-skills\install.ps1` (cài tự động không có người ngồi máy: thêm `--yes`) |
+
+- **File dữ liệu CSV (API data-driven):** trong Excel chọn **Save As → "CSV UTF-8 (Comma delimited)"**. Kiểu "CSV (Comma delimited)" mặc định trên Windows lưu theo bảng mã ANSI, tiếng Việt sẽ bị lỗi font.
+- **File `.env`:** sửa bằng Notepad/VSCode đều được (đọc được cả file có BOM, xuống dòng CRLF).
+- **Jenkins:** pipeline (RF và Playwright) chạy lệnh `sh` → agent Jenkins phải là Linux/macOS. Máy Windows chỉ dùng để viết và chạy test local.
+
+`/autotest-rf-ios` cần macOS (Xcode) — không chạy trên Windows.
+
+Bộ Playwright chạy được trên Windows; nếu PowerShell báo "running scripts is disabled" khi gõ `npx`, skill chạy `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned` (như khoá học). Các dependency đã **pin sẵn trong `package.json`** (`@playwright/test`/`playwright` **1.59.1** — bản cuối còn hỗ trợ macOS 13, vẫn chạy OS mới hơn), nên `npm install` cho kết quả như nhau trên mọi máy/OS.
+
+---
+
+## Xử lý sự cố khi cài
+
+| Hiện tượng | Nguyên nhân / cách xử lý |
+|---|---|
+| `vsaf install autotest-skill` báo không tìm thấy flow / khoá registry | Chưa khai `autotest-skill` trong `~/.vsaf/registry.yaml`, hoặc gõ sai chữ hoa/thường — xem bước 2 ở mục Cài đặt |
+| `[autotest] Cài chưa đủ` / `✗ thiếu skill ...` | Bản clone trong cache cũ hoặc hỏng — chạy lại `vsaf install autotest-skill` (engine 1.3.x: thêm `--refresh-flows`) |
+| Gõ `/vsaf autotest-skill/automation-test` không thấy | Mở lại Claude Code tại đúng thư mục project (file `.mcp.json` và `.vsaf/` chỉ nạp khi mở phiên mới) |
+| `[autotest] Project đích là chính repo nguồn` | Đang đứng trong repo nguồn AutoTest Skills (`autotest-skills`) — `cd` sang project của bạn rồi cài |
+| Skill báo `EMPTY` cho key credential | Mở đúng file skill in ra, điền giá trị sau dấu `=`, lưu, gõ "xong" |
+| Chạy `/vsaf autotest-skill/automation-test`, xong bước tài liệu mà không thấy file nào trong project | `.vsaf/config.yaml` đang `isolation: ephemeral` → agent làm trong thư mục tạm (đường dẫn ở `workspacePath` trong `.vsaf/storage/run-*/state.json`), file về project khi xong cả lượt. Đổi `isolation: type: none` cho các lượt sau |
+| Log cài báo `Không có ai ở bàn phím để trả lời — KHÔNG cài skill lần này` | Đang cài tự động (CI/script): thêm `--yes` (`vsaf install autotest-skill --yes`, hoặc `install.sh`/`install.ps1 --yes`) |
+
+---
+
+## Tất cả skill
+
+| Skill | Mô tả |
+|---|---|
+| `/autotest-project-docs` | Tạo / cập nhật domain knowledge — Confluence, file/text, hoặc AI tự tạo |
+| `/autotest-scenarios` | Tạo / cập nhật kịch bản kiểm thử — AI từ tài liệu (đối chiếu tài liệu, truy nguyên nguồn, không tự đoán, kỹ thuật thiết kế EP/BVA/UCT/DT/ST/PW/EG, risk-based priority, học tích luỹ qua các lần chạy) hoặc convert Excel |
+| `/autotest-strategy` | Phân tích TC → chiến lược + đề xuất tinh chỉnh |
+| `/autotest-rf-web` | Viết / cập nhật / refactor / xoá test Web |
+| `/autotest-rf-android` | Viết / cập nhật / refactor / xoá test Android |
+| `/autotest-rf-ios` | Viết / cập nhật / refactor / xoá test iOS |
+| `/autotest-rf-api` | Viết / cập nhật / refactor / xoá test API |
+| `/autotest-rf-results` | Báo cáo kết quả từ `automation_test/results/output.xml` |
+| *(auto)* `autotest-rf-db` | DB support — tự kích hoạt khi TC cần. Assert, Query, Transaction, Wait async. Multi-alias. SSH tunnel. |
+| *(auto)* `autotest-credentials` | Tạo sẵn file credential đủ key, thêm key còn thiếu, kiểm tra trước khi chạy và chỉ bạn điền — không hỏi/đọc giá trị qua chat. |
+| *(auto, bắt buộc)* `autotest-rf-mcp-assist` | Verify/debug locator qua RobotMCP live session (Web/Android/iOS). Nếu chưa cài, tự cài + yêu cầu mở session mới. |
+| `/autotest-rf-jenkins` | Tạo / cập nhật Jenkinsfile + script Python CI/CD pipeline. Report S3/MinIO, thông báo Vops/Telegram (kèm ảnh gộp lỗi). |
+| `/autotest-pw-web` | Playwright TS — viết / cập nhật / refactor / xoá test Web kiểu Cucumber (`.feature` + step + POManager) |
+| `/autotest-pw-api` | Playwright TS — test REST API (Scenario, hoặc data-driven CSV Mode D), đồng thời là lớp API cho test web/Android |
+| `/autotest-pw-android` | Playwright TS — test Android (native, WebView, Chrome) qua ADB |
+| `/autotest-pw-jenkins` | Pipeline Jenkins cho Playwright — Jenkinsfile cấu hình bằng khối `CFG`, tick chọn feature/TC trên Build with Parameters, Jenkins credentials, JUnit/Playwright HTML/Monocart/MinIO, shard, Vops/Telegram |
+| `/vsaf autotest-skill/automation-test` | Chạy full 5 bước liên tiếp — Robot Framework hoặc Playwright (luôn hỏi bạn chọn, trừ khi yêu cầu đã ghi rõ) |
+
+---
+
+## Cấu trúc thư mục
+
+Skills tự scaffold khi viết feature đầu tiên. Không bao giờ ghi đè file đang có.
+
+```
+automation_test/                   # Toàn bộ code framework + domain knowledge automation
+  docs/                             # Domain knowledge + kịch bản + chiến lược
+    global-data.md                  # URL, device caps, tên key credential — KHÔNG chứa giá trị (gitignored)
+    product-overview.md             # Mô tả sản phẩm
+    api-reference.md                # Danh sách endpoints
+    scenario-learnings.md           # Bài học tích luỹ của /autotest-scenarios qua các lần chạy
+    features/<feature>/
+      business-scenario.md          # Luồng nghiệp vụ
+      detail-design.md              # Thiết kế kỹ thuật
+      test-cases.md                 # Kịch bản kiểm thử (sinh bởi /autotest-scenarios)
+      strategy.md                   # Tài liệu chiến lược (sinh bởi /autotest-strategy)
+  tests/<feature>.robot             # Test suites
+  features/<feature>/               # Web / mobile keywords & locators
+  api/<feature>/                    # API keywords & endpoints
+  common/                           # Wrappers và biến dùng chung
+    common_keywords.resource       # API, web wrappers
+    db_keywords.resource           # DB wrappers (tạo khi cần — autotest-rf-db)
+    db_variables.resource          # DB host/port/tên DB (tạo khi cần — autotest-rf-db); user/pass ở .env
+  config/imports.resource           # Libraries + resource imports
+  data/<feature>.yaml               # Test data (không chứa mật khẩu thật)
+  .env                              # Credential chạy test — bạn tự điền (gitignored, KHÔNG commit)
+  .env.example                      # Chỉ tên key, không giá trị — commit để teammate biết cần điền gì
+  python_lib/env_secrets.py         # Nạp .env cho Robot Framework (tự tạo)
+  python_lib/db_tunnel.py           # SSH tunnel helper (tạo khi cần — autotest-rf-db)
+  results/                          # Output robot (gitignored)
+
+  Jenkinsfile                       # CI/CD pipeline (tạo khi cần — /autotest-rf-jenkins)
+  config/<runner>.py                # Runner script gọi robot (tạo khi cần — /autotest-rf-jenkins)
+  python_lib/common_utilities.py    # Helper cho runner script (tạo khi cần — /autotest-rf-jenkins)
+  python_lib/convert_fail_to_skip.py     # Convert TC fail → skip cho report (tạo khi cần — /autotest-rf-jenkins)
+  python_lib/create_index_file_table.py  # Tạo index.html tổng hợp report/screenshot (tạo khi cần — /autotest-rf-jenkins)
+  python_lib/read_output_file.py    # Đọc kết quả cho Jenkins build description (tạo khi cần — /autotest-rf-jenkins)
+  python_lib/push_chat_apps.py      # Gửi kết quả qua Vops/Telegram (tạo khi cần — /autotest-rf-jenkins)
+```
+
+**Dự án Playwright** dùng cùng thư mục `automation_test/` (cùng `docs/`, `.env`), khác các thư mục con nên có thể để song song với bộ Robot Framework:
+
+```
+automation_test/
+  package.json  tsconfig.json  playwright.config.ts   # tạo bởi skill; package.json PIN SẴN đủ dep → chỉ cần npm install
+  bdd/features/<feature>.feature                      # kịch bản Gherkin — 1 Scenario / TC; tag @web/@api/@android định tuyến project (cấu trúc PHẲNG)
+  bdd/steps/<feature>.steps.ts                        # step TypeScript (import từ ./bdd); bdd/steps/common/ = step dùng chung
+  bdd/__screenshots__/                                # ảnh chuẩn so sánh giao diện (commit)
+  pages/POManager.ts  pages/<feature>/<Name>Page.ts         # WEB: page object (chia theo page)
+  functions/FunctionManager.ts  functions/<feature>/<Name>Function.ts   # ANDROID: function object (chia theo chức năng, trải nhiều màn)
+  services/<feature>/<Feature>Service.ts  services/base/ApiClient.ts     # lớp API (preset/verify) — có ở mọi project
+  config/env.ts                                       # URL, login API, chế độ chạy — đọc credential từ .env
+  data/<feature>.json                                # test data (JSON, key "data", 1 entry/TC) — qua loadData<T>()
+  data/api/<feature>.csv                             # API data-driven (Mode D): 1 dòng = 1 TC → npm run dd:sync
+  bdd/features/<feature>.dd.feature                  # TỰ SINH từ CSV — không sửa tay
+  fixtures/  support/  tests/  ci/  Jenkinsfile       # tests/setup chỉ khi --web-login (storageState)
+  ci/tc-catalog.ts                                   # danh mục feature/TC cho checkbox trên Jenkins (npm run ci:catalog)
+  results/                                            # mọi report (gitignored): html-report/, monocart-report/index.html (mở thẳng)
+```
+
+> Một repo chỉ có một bộ domain docs, dùng chung cho toàn project — không cần đặt tên riêng.
+> Xem ví dụ mẫu cấu trúc `automation_test/docs/` trong `.claude/skills/autotest-project-docs/SKILL.md`.
+> Toàn bộ automation (docs, tests, keywords, common, config, data, python_lib, Jenkinsfile) nằm trong `automation_test/` — không để rải ở ngoài root.
+
+---
+
+## Project cũ / code có sẵn
+
+Skill tự nhận biết trạng thái trước khi làm:
+
+| Trạng thái | Điều kiện | Hành vi |
+|---|---|---|
+| `NEW` | Chưa có test file nào | Tạo scaffold tự do |
+| `EXTERNAL` | Test file có sẵn nhưng nằm ngoài `automation_test/` (project cũ) | **Luôn hỏi trước**: (1) giữ 100% ở vị trí cũ — dùng skill bình thường như `COMPLIANT`, không tạo `automation_test/`; (2) tạo `automation_test/` riêng cho phần mới, giữ code cũ nguyên; (3) di chuyển code cũ vào `automation_test/`. Không bao giờ tự quyết định di chuyển. |
+| `COMPLIANT` | Có tests + đủ framework files (trong `automation_test/`) | Đọc conventions hiện có, theo đó |
+| `PARTIAL` | Có tests trong `automation_test/` nhưng thiếu framework | Hỏi: restructure hay giữ nguyên? Restructure chỉ đụng tới file trong `automation_test/`. |
+
+Restructure chỉ di chuyển code vào đúng chỗ — không đổi nội dung keyword, locator, hay logic.
+
+Bộ Playwright nhận biết trạng thái tương tự (`NEW` / `EXTERNAL` / `PARTIAL` / `COMPLIANT`). Thư mục chưa có `automation_test/package.json` được coi là `NEW` (skill scaffold `package.json` pin sẵn dep → `npm install`). Project Playwright cũ viết `test()` thường (không phải `.feature`) được giữ nguyên kiểu đó; chỉ chuyển sang Cucumber khi bạn yêu cầu.
+
+---
+
+## Đóng góp — cập nhật bộ skill / workflow
+
+Bộ skill và workflow `autotest-*` là **tài sản dùng chung**. Khi dùng thấy skill sai, thiếu tính năng, hướng dẫn chưa rõ hay workflow chưa hợp lý, hãy đưa những thay đổi về bộ chung để ai cũng được hưởng, và bộ skill ngày một hoàn thiện hơn.
+
+**Vì sao không nên tự sửa và sử dụng riêng trong project:**
+- Bản sửa tay ở `.claude/skills/autotest-*` của project sẽ **bị thay** khi chạy lại `vsaf install autotest-skill` (bản trên Skill Hub ghi đè).
+- Mỗi project một bản lệch nhau → lỗi đã sửa ở chỗ này vẫn còn ở chỗ khác, khó hỗ trợ, khó nâng cấp.
+- Người khác gặp đúng lỗi đó sẽ phải tự sửa lại lần nữa.
+
+**Cách đóng góp — chọn 1 trong 2:**
+
+1. **Tạo pull request** vào repo `aut/autotest-skills` trên Bitbucket (`bitbucket.digital.vn`):
+   - Tạo nhánh mới từ `master`, sửa đúng file của skill/workflow liên quan (`.claude/skills/<skill>/…` hoặc `.vsaf/workflows/autotest-skill/…`).
+   - Chạy thử thay đổi trên một project thật trước khi tạo PR.
+   - Mô tả PR: vấn đề gặp phải, cách tái hiện, thay đổi đã làm, đã test thế nào.
+2. **Gửi yêu cầu cho team Auto** nếu chưa tiện tự sửa — nêu rõ:
+   - Skill / workflow nào (vd `autotest-pw-web`, `automation-test`).
+   - Vấn đề gặp phải hoặc tính năng cần thêm, kèm câu lệnh đã gõ và kết quả (log/ảnh chụp nếu có).
+   - Kết quả mong muốn.
+
+Sau khi thay đổi được duyệt và merge, team Auto **publish bản mới lên Skill Hub**; các project chỉ cần chạy lại `vsaf install autotest-skill` để nhận bản cập nhật.
+
+> Cần sửa gấp để không bị chặn việc? Có thể sửa tạm trong project, nhưng **vẫn gửi PR/yêu cầu** ngay để đưa về bộ chung — và nhớ bản sửa tạm sẽ mất ở lần cài lại tiếp theo.
+
+> **Không đưa vào PR/yêu cầu:** credential, token, mật khẩu, dữ liệu khách hàng hay tài liệu nội bộ của project — chỉ mô tả vấn đề và nội dung đã ẩn thông tin nhạy cảm.
+Beta
+AI can make mistakes, so double-check it.
+0 / 0
+used queries
+1

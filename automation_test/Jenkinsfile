@@ -1,0 +1,420 @@
+// =====================================================================================
+// Playwright (TypeScript) pipeline — sinh bởi autotest-pw-jenkins.
+//
+// Nguyên tắc: Jenkinsfile CHỈ điều phối. Mọi logic nằm trong automation_test/ci/*.ts
+// (summarize → collage → notify), chạy được y hệt trên máy dev:
+//   cd automation_test && npm test && npm run summary && npm run ci:notify -- --dry-run
+// Kịch bản viết kiểu Cucumber (bdd/features/*.feature) — `npm run bddgen` sinh test trước khi chạy.
+// Cấu hình DUY NHẤT cần sửa là khối CFG bên dưới — không sửa stage để bật/tắt tính năng.
+//
+// Plugin cần: Pipeline, Git, Credentials Binding, JUnit, HTML Publisher, Pipeline Utility Steps
+// (readJSON), Timestamper, Active Choices (chọn feature/TC bằng checkbox). Tuỳ chọn: Lockable Resources
+// (androidLockLabel), Docker Pipeline (dockerImage).
+// =====================================================================================
+
+// Không có `def`: CFG phải là biến binding thì các hàm helper bên dưới mới thấy được.
+CFG = [
+  agentLabel      : 'any',
+  dockerImage     : '',
+  environments    : ['demoblaze'],
+  projects        : ['web-chromium'],
+  cron            : 'H 16 * * *',                // 4h chiều hàng ngày
+  cronGrep        : '',
+  envFileCredId   : '',
+  androidLockLabel: '',
+  minio           : [
+    enabled   : false,
+    credId    : '',
+    uploadHost: '',
+    staticHost: '',
+    bucket    : '',
+  ],
+  notify          : [
+    vopsCredId    : '',
+    vopsRoomId    : '',
+    vopsGroupLink : '',
+    telegramCredId: '',
+    telegramChatId: '',
+    scenarioLink  : '',
+  ],
+]
+
+// TC_CATALOG:BEGIN — tự sinh bởi `npm run ci:catalog` từ bdd/features, KHÔNG sửa tay
+// Không có `def`: TC_CATALOG là biến binding, các hàm helper bên dưới mới thấy được.
+TC_CATALOG = [
+  [tag: 'signup', file: 'bdd/features/signup.feature', title: 'Đăng ký tài khoản - Demoblaze', tcs: [
+    [id: 'TC-001', title: 'Kiểm tra hiển thị nút Sign up trên header'],
+    [id: 'TC-002', title: 'Kiểm tra hiển thị popup Sign up khi click nút Sign up'],
+    [id: 'TC-003', title: 'Đăng ký tài khoản thành công với username và password hợp lệ'],
+    [id: 'TC-004', title: 'Đăng ký thất bại khi username đã tồn tại'],
+    [id: 'TC-005', title: 'Đăng ký thất bại khi bỏ trống Username'],
+    [id: 'TC-006', title: 'Đăng ký thất bại khi bỏ trống Password'],
+    [id: 'TC-007', title: 'Đóng popup Sign up khi click nút Close'],
+  ]],
+]
+// TC_CATALOG:END
+
+// ---------------------------------- helpers -----------------------------------------
+
+/** Chạy closure trong docker image (nếu cấu hình) hoặc thẳng trên agent. */
+def inRuntime(Closure body) {
+  if (CFG.dockerImage) {
+    docker.image(CFG.dockerImage).inside('--ipc=host') { body() }
+  } else {
+    body()
+  }
+}
+
+/** Nạp file .env bí mật (nếu có) cho các lệnh bên trong — config/env.ts đọc $AUTOTEST_ENV_FILE. */
+def withEnvFile(Closure body) {
+  if (CFG.envFileCredId) {
+    withCredentials([file(credentialsId: CFG.envFileCredId, variable: 'AUTOTEST_ENV_FILE')]) { body() }
+  } else {
+    body()
+  }
+}
+
+/**
+ * Thiết bị Android cho project android (Lockable Resources):
+ *  - ANDROID_DEVICE_URL (link control máy device farm MCloud) → khoá theo serial; fixture tự đăng nhập Keycloak device farm
+ *    (VDS_STF_<HOST>_USER/_PASSWORD ở ~/.vds/sdlc-config.env của user chạy agent), tự đăng ký ADB key, mượn máy;
+ *  - không nhập → khoá 1 máy cắm tại agent theo label (androidLockLabel), xuất ANDROID_SERIAL.
+ */
+/** Serial trong link control STF (…/control/<serial>) để khoá tài nguyên theo máy. */
+def farmSerial() {
+  def url = params.ANDROID_DEVICE_URL?.trim()
+  def m = url ? (url =~ /\/control\/([^\/?#]+)/) : null
+  return (m && m.find()) ? m.group(1) : ''
+}
+
+def withDevice(Closure body) {
+  def url = params.ANDROID_DEVICE_URL?.trim()
+  def onAndroid = selectedProjects().contains('android')
+  if (url && onAndroid) {
+    // Device farm: chỉ cần link control; tài khoản Keycloak device farm đọc từ ~/.vds/sdlc-config.env trên agent (support/stf.ts).
+    lock(resource: "android-farm-${farmSerial()}") {
+      withEnv(["ANDROID_DEVICE_URL=${url}"]) { body() }
+    }
+  } else if (CFG.androidLockLabel && onAndroid) {
+    lock(label: CFG.androidLockLabel, quantity: 1, variable: 'LOCKED_DEVICE') {
+      withEnv(["ANDROID_SERIAL=${env.LOCKED_DEVICE}"]) { body() }
+    }
+  } else {
+    body()
+  }
+}
+
+// ------------------------- chọn feature / TC trên giao diện -------------------------
+// FEATURES và TC_LIST là tham số Active Choices dạng checkbox, dữ liệu lấy từ TC_CATALOG ở trên.
+// Script của Active Choices chạy riêng trên controller (không thấy biến của Jenkinsfile) nên danh mục
+// được nhúng thẳng vào chuỗi script. Giá trị gửi về pipeline: FEATURES = "login,todo",
+// TC_LIST = "todo|TC-001,todo|TC-003" (tag feature | mã TC — mã TC có thể trùng giữa các feature).
+
+/** Chuỗi Groovy nháy đơn an toàn để nhúng vào script Active Choices. */
+def gq(String s) {
+  return "'" + s.replace('\\', '\\\\').replace("'", "\\'") + "'"
+}
+
+/**
+ * Nhãn hiển thị: Active Choices chèn nhãn thẳng vào HTML của trang Build with Parameters
+ * (`<case>` biến mất, `'` hiện thành &#39;) — đổi sang ký tự Unicode tương đương, chặn luôn HTML lạ.
+ */
+def label(String s) {
+  return s.replace("'", '\u2019').replace('<', '\u2039').replace('>', '\u203A')
+}
+
+def featureKey(Map f) {
+  return f.tag ?: f.file
+}
+
+def featureChoicesScript() {
+  def entries = TC_CATALOG.collect { f -> "${gq(featureKey(f))}: ${gq(label("${featureKey(f)} — ${f.title} (${f.tcs.size()} TC)"))}" }
+  return entries ? "return [${entries.join(', ')}]" : 'return [:]'
+}
+
+def tcChoicesScript() {
+  def groups = TC_CATALOG.collect { f ->
+    def tcs = f.tcs.collect { tc -> "${gq("${f.tag}|${tc.id}")}: ${gq(label("${tc.id} — ${tc.title}  [${featureKey(f)}]"))}" }
+    "${gq(featureKey(f))}: [${tcs ? tcs.join(', ') : ':'}]"
+  }
+  return '''
+    def all = ''' + (groups ? "[${groups.join(', ')}]" : '[:]') + '''
+    def out = [:]
+    (FEATURES ?: '').split(',').collect { it.trim() }.findAll { it }.each { k -> out.putAll(all[k] ?: [:]) }
+    return out
+  '''
+}
+
+// Tính sẵn ở top-level (giống CFG) để khối parameters {} chỉ tham chiếu biến.
+FEATURE_CHOICES_SCRIPT = featureChoicesScript()
+TC_CHOICES_SCRIPT = tcChoicesScript()
+
+/** Thoát ký tự đặc biệt regex trong tag — tag Gherkin chỉ gồm chữ, số, - : . _ nên chỉ cần thoát dấu chấm. */
+def rx(String s) {
+  return s.replace('.', '\\.')
+}
+
+/** "todo|TC-001,login|TC-001" → regex khớp đúng TC của đúng feature (tag feature VÀ tag TC). */
+def tcListGrep(String selected) {
+  return selected.split(',').collect { it.trim() }.findAll { it }.collect { v ->
+    def parts = v.split(/\|/, 2)
+    def tag = parts.size() > 1 ? parts[0] : ''
+    def id = parts[-1]
+    tag ? "^(?=.*@${rx(tag)}\\b)(?=.*@${rx(id)}\\b)" : "@${rx(id)}\\b"
+  }.join('|')
+}
+
+/** "login,todo" → @login\b|@todo\b (feature không có tag → liệt kê mã TC của nó). */
+def featuresGrep(String selected) {
+  def keys = selected.split(',').collect { it.trim() }.findAll { it }
+  return TC_CATALOG.findAll { keys.contains(featureKey(it)) }.collect { f ->
+    f.tag ? "@${rx(f.tag)}\\b" : f.tcs.collect { "@${rx(it.id)}\\b" }.join('|')
+  }.join('|')
+}
+
+/**
+ * Bộ lọc test, ưu tiên: TCS (gõ tay) > TC_LIST (tick TC) > FEATURES (tick feature, kết hợp được với GREP)
+ * > GREP > cronGrep (build theo lịch — Active Choices luôn rỗng ở build do cron bắn).
+ */
+def selectionGrep() {
+  if (params.TCS?.trim()) {
+    // "TC-001, TC-003" → @TC-001\b|@TC-003\b (grep khớp cả tag; \b để TC-001 không ăn TC-0010)
+    return params.TCS.split(/[,\s]+/).findAll { it }.collect { "@${it.trim()}\\b" }.join('|')
+  }
+  if (params.TC_LIST?.trim()) return tcListGrep(params.TC_LIST)
+  def grep = params.GREP?.trim()
+  if (params.FEATURES?.trim()) {
+    def feat = featuresGrep(params.FEATURES)
+    if (feat && grep) return "^(?=.*(?:${feat}))(?=.*(?:${grep}))"
+    if (feat) return feat
+  }
+  if (!grep && isTimerBuild()) grep = CFG.cronGrep
+  return grep
+}
+
+/** Mô tả ngắn phần đã chọn cho build description. */
+def selectionLabel() {
+  if (params.TCS?.trim()) return params.TCS.trim()
+  if (params.TC_LIST?.trim()) return params.TC_LIST.split(',').findAll { it.trim() }.collect { it.split(/\|/)[-1] }.join(', ')
+  if (params.FEATURES?.trim()) return "feature ${params.FEATURES}${params.GREP?.trim() ? ' · ' + params.GREP.trim() : ''}"
+  return params.GREP?.trim() ?: (isTimerBuild() ? CFG.cronGrep : 'all')
+}
+
+def selectedProjects() {
+  return params.PROJECT == 'all' ? CFG.projects : [params.PROJECT]
+}
+
+/** Chuỗi tham số dòng lệnh Playwright — mọi giá trị người dùng nhập đều được quote. */
+def playwrightArgs() {
+  def args = selectedProjects().collect { "--project='${it}'" }
+  def grep = selectionGrep()
+  if (grep) args << "--grep='${grep.replace("'", "")}'"
+  if (params.GREP_INVERT?.trim()) args << "--grep-invert='${params.GREP_INVERT.trim().replace("'", "")}'"
+  args << "--retries=${params.RETRIES}"
+  args << (selectedProjects().contains('android') ? '--workers=1' : "--workers=${params.WORKERS}")
+  return args.join(' ')
+}
+
+def isTimerBuild() {
+  return !currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause').isEmpty()
+}
+
+def installDeps() {
+  sh 'node --version && npm ci --no-audit --no-fund'
+  // Gherkin (.feature) → .features-gen/ (bỏ qua nếu project viết kiểu spec, không có script bddgen)
+  sh 'npm run --if-present bddgen'
+  // Chromium cho test web + cho ci/collage.ts (ghép ảnh lỗi)
+  sh(CFG.dockerImage ? 'true' : 'npx playwright install chromium')
+  sh 'npm run typecheck'
+  // Danh mục FEATURES/TC_LIST trên giao diện có cũ hơn bdd/features không — chỉ cảnh báo, không chặn build.
+  sh 'if [ -f ci/tc-catalog.ts ]; then npx tsx ci/tc-catalog.ts --check || echo "CẢNH BÁO: danh sách feature/TC trên Jenkins chưa cập nhật — chạy npm run ci:catalog rồi commit Jenkinsfile."; fi'
+}
+
+def downloadApk() {
+  if (params.APK_URL?.trim()) {
+    sh 'mkdir -p results && curl -fsSL "$APK_URL" -o results/app-under-test.apk'
+    env.APK_PATH = "${pwd()}/results/app-under-test.apk"
+  }
+}
+
+// ---------------------------------- pipeline ----------------------------------------
+
+pipeline {
+  agent { label CFG.agentLabel }
+
+  options {
+    timestamps()
+    timeout(time: 120, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '10'))
+    disableConcurrentBuilds()
+  }
+
+  parameters {
+    choice(name: 'ENV', choices: CFG.environments, description: 'Môi trường chạy test')
+    choice(name: 'PROJECT', choices: ['all'] + CFG.projects, description: 'Playwright project (platform)')
+    activeChoice(name: 'FEATURES', choiceType: 'PT_CHECKBOX', filterable: true, filterLength: 1,
+      description: 'Chọn feature cần chạy (bỏ trống = theo GREP / chạy hết). Kết hợp được với GREP, vd chọn feature login + GREP @smoke',
+      script: groovyScript(script: [classpath: [], sandbox: true, script: FEATURE_CHOICES_SCRIPT],
+                           fallbackScript: [classpath: [], sandbox: true, script: 'return [:]']))
+    reactiveChoice(name: 'TC_LIST', choiceType: 'PT_CHECKBOX', filterable: true, filterLength: 1, referencedParameters: 'FEATURES',
+      description: 'Tick TC cụ thể trong các feature đã chọn ở trên (bỏ trống = chạy cả feature)',
+      script: groovyScript(script: [classpath: [], sandbox: true, script: TC_CHOICES_SCRIPT],
+                           fallbackScript: [classpath: [], sandbox: true, script: 'return [:]']))
+    string(name: 'TCS', defaultValue: '', description: 'Gõ tay mã TC, vd: TC-001, TC-003 — ưu tiên hơn mọi lựa chọn khác (dùng khi gọi job qua API)')
+    string(name: 'GREP', defaultValue: '', description: 'Lọc theo tag/tên, vd: @smoke | @regression | @login')
+    string(name: 'GREP_INVERT', defaultValue: '', description: 'Loại trừ, vd: @slow')
+    string(name: 'WORKERS', defaultValue: '4', description: 'Số worker song song (android luôn 1)')
+    choice(name: 'RETRIES', choices: ['1', '0', '2'], description: 'Retry test fail (pass sau retry = flaky)')
+    choice(name: 'SHARDS', choices: ['1', '2', '3', '4'], description: '>1 = chia test cho nhiều agent cùng label chạy song song (không dùng cho android)')
+    string(name: 'APK_URL', defaultValue: '', description: 'Android: link APK cần cài trước khi chạy (bỏ trống = dùng app đang có trên máy)')
+    string(name: 'ANDROID_DEVICE_URL', defaultValue: '', description: 'Android device farm MCloud: link control, vd http://10.207.247.201/#!/control/<serial>. Agent cần tài khoản Keycloak device farm trong ~/.vds/sdlc-config.env (VDS_STF_<HOST>_USER/_PASSWORD) — tự đăng nhập, tự đăng ký ADB key, mượn máy, kết nối. Bỏ trống = máy cắm tại agent')
+    booleanParam(name: 'NOTIFY', defaultValue: true, description: 'Gửi kết quả lên Vops/Telegram')
+  }
+
+  triggers { cron(CFG.cron) }
+
+  environment {
+    CI = 'true'
+    TEST_ENV = "${params.ENV ?: CFG.environments[0]}"
+    TEST_ACCOUNT = "${(params.ENV ?: CFG.environments[0]).toUpperCase()}_${params.PROJECT ?: 'all'}"
+    RUN_TS = "${new Date().format('yyyy_MM_dd_HH_mm_ss')}"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          currentBuild.description = "${params.ENV.toUpperCase()} · ${params.PROJECT} · ${selectionLabel()}"
+          def farm = farmSerial()
+          if (farm) currentBuild.description += " · farm ${farm}"
+        }
+      }
+    }
+
+    stage('Test') {
+      when { expression { params.SHARDS == '1' || selectedProjects().contains('android') } }
+      steps {
+        dir('automation_test') {
+          script {
+            inRuntime {
+              installDeps()
+              downloadApk()
+              withEnvFile {
+                withDevice {
+                  def rc = sh(script: "npx playwright test ${playwrightArgs()}", returnStatus: true)
+                  echo "playwright exit code: ${rc} (fail test → build UNSTABLE qua JUnit, không dừng pipeline)"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    stage('Test (sharded)') {
+      when { expression { params.SHARDS != '1' && !selectedProjects().contains('android') } }
+      steps {
+        script {
+          def total = params.SHARDS as int
+          def branches = [:]
+          for (int i = 1; i <= total; i++) {
+            def shard = i
+            branches["shard ${shard}/${total}"] = {
+              node(CFG.agentLabel) {
+                checkout scm
+                dir('automation_test') {
+                  inRuntime {
+                    installDeps()
+                    withEnvFile {
+                      withEnv(["PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report"]) {
+                        sh(script: "npx playwright test ${playwrightArgs()} --shard=${shard}/${total} --reporter=blob", returnStatus: true)
+                      }
+                    }
+                  }
+                  stash name: "blob-${shard}", includes: 'blob-report/**', allowEmpty: true
+                  stash name: "shots-${shard}", includes: 'results/test-results/**', allowEmpty: true
+                }
+              }
+            }
+          }
+          parallel branches
+          dir('automation_test') {
+            sh 'rm -rf all-blob results && mkdir -p all-blob'
+            for (int i = 1; i <= total; i++) {
+              dir("shard-${i}") { unstash "blob-${i}" }
+              unstash "shots-${i}"
+              sh "cp shard-${i}/blob-report/*.zip all-blob/ 2>/dev/null || true"
+            }
+            inRuntime {
+              installDeps()
+              // Dùng chính playwright.config.ts → cùng bộ reporter (html, junit, json, monocart)
+              sh 'npx playwright merge-reports --config=playwright.config.ts ./all-blob'
+            }
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      dir('automation_test') {
+        script {
+          if (!fileExists('results/results.json')) {
+            currentBuild.result = 'FAILURE'
+            echo 'Không có results/results.json — test không chạy được (xem log cài đặt / typecheck ở trên).'
+            return
+          }
+          inRuntime {
+            sh 'npx tsx ci/summarize.ts'
+            sh 'npx tsx ci/collage.ts || true'
+          }
+          junit allowEmptyResults: true, testResults: 'results/junit.xml'
+          publishHTML(target: [reportDir: 'results/html-report', reportFiles: 'index.html', reportName: 'Playwright Report', keepAll: true, alwaysLinkToLastBuild: true, allowMissing: true])
+          publishHTML(target: [reportDir: 'results/monocart-report', reportFiles: 'index.html', reportName: 'Monocart Report', keepAll: true, alwaysLinkToLastBuild: true, allowMissing: true])
+          archiveArtifacts artifacts: 'results/summary.json, results/junit.xml, results/merged_failures.png, results/test-results/**/*.png, results/test-results/**/trace.zip', allowEmptyArchive: true
+
+          env.REPORT_URL = "${env.BUILD_URL}Playwright_20Report/"
+          if (CFG.minio.enabled) {
+            def remote = "${CFG.minio.bucket}/${params.ENV}/${env.TEST_ACCOUNT}/${env.RUN_TS}"
+            withCredentials([usernamePassword(credentialsId: CFG.minio.credId, usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
+              // Khoá nằm trong biến môi trường MC_HOST_* (không xuất hiện trên command line / ps)
+              withEnv(["MINIO_UPLOAD_HOST=${CFG.minio.uploadHost}", "MINIO_REMOTE=${remote}"]) {
+                def rc = sh(returnStatus: true, script: '''
+                  export MC_HOST_autotest="http://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@${MINIO_UPLOAD_HOST}"
+                  mc cp --recursive results/html-report/ "autotest/${MINIO_REMOTE}/" &&
+                  { [ ! -d results/monocart-report ] || mc cp --recursive results/monocart-report/ "autotest/${MINIO_REMOTE}/monocart/"; } &&
+                  { [ ! -f results/merged_failures.png ] || mc cp results/merged_failures.png "autotest/${MINIO_REMOTE}/"; }
+                ''')
+                if (rc == 0) {
+                  env.REPORT_URL = "http://${CFG.minio.staticHost}/${remote}/index.html"
+                  if (fileExists('results/merged_failures.png')) env.SCREENSHOT_URL = "http://${CFG.minio.staticHost}/${remote}/merged_failures.png"
+                } else {
+                  echo "MinIO upload lỗi (rc=${rc}) — dùng link report trên Jenkins."
+                }
+              }
+            }
+          }
+
+          def s = readJSON file: 'results/summary.json'
+          currentBuild.description = "${params.ENV.toUpperCase()} · ${params.PROJECT}<br/>" +
+            "TOTAL ${s.total} · pass ${s.passed} · fail ${s.failed} · skip ${s.skipped} · known-bug ${s.knownIssue} · flaky ${s.flaky}<br/>" +
+            "<a href='${env.REPORT_URL}'>Report</a>" + (env.SCREENSHOT_URL ? " · <a href='${env.SCREENSHOT_URL}'>Screenshot</a>" : '')
+
+          if (params.NOTIFY) {
+            def creds = []
+            if (CFG.notify.vopsCredId) creds << usernamePassword(credentialsId: CFG.notify.vopsCredId, usernameVariable: 'VOPS_USER_ID', passwordVariable: 'VOPS_TOKEN')
+            if (CFG.notify.telegramCredId) creds << string(credentialsId: CFG.notify.telegramCredId, variable: 'TELEGRAM_BOT_TOKEN')
+            withEnv(["VOPS_ROOM_ID=${CFG.notify.vopsRoomId}", "VOPS_GROUP_LINK=${CFG.notify.vopsGroupLink}",
+                     "TELEGRAM_CHAT_ID=${CFG.notify.telegramChatId}", "SCENARIO_LINK=${CFG.notify.scenarioLink}"]) {
+              withCredentials(creds) {
+                inRuntime { sh 'npx tsx ci/notify.ts || true' }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

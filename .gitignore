@@ -1,0 +1,13 @@
+graphify-out/
+.gitnexus/
+.vsaf/artifacts/
+automation_test/docs/global-data.md
+automation_test/.env
+
+# Playwright
+automation_test/node_modules/
+automation_test/results/
+automation_test/.features-gen/
+automation_test/.auth/
+automation_test/playwright-report/
+automation_test/test-results/

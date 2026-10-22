@@ -1,0 +1,28 @@
+{
+  "askId": "ask-f5f20c",
+  "kind": "ask",
+  "runId": null,
+  "type": "choice",
+  "question": "Bạn muốn cấu hình thêm gì cho pipeline Jenkins?",
+  "context": "Pipeline Playwright Jenkins đã có sẵn với CFG cơ bản: agent 'any', môi trường demoblaze, project web-chromium, lịch chạy 4h chiều hàng ngày. Chưa cấu hình: credential .env, MinIO, Vops, Telegram. Chọn giữ nguyên nếu đã đủ dùng; chọn cấu hình thêm nếu cần notification hoặc lưu report lên MinIO.",
+  "options": [
+    "Giữ nguyên CFG hiện tại (đã đủ dùng)",
+    "Cấu hình thêm MinIO/Vops/Telegram",
+    "Đổi agent/docker/lịch chạy",
+    "Cấu hình đầy đủ tất cả"
+  ],
+  "status": "answered",
+  "createdAt": "2026-10-22T08:30:48.775Z",
+  "expiresAt": "2026-10-22T09:00:48.773Z",
+  "nonce": "sazhxvde",
+  "messageRef": null,
+  "answer": {
+    "value": "1. Agent any, không Docker. 2. Giữ lịch H 16 * * *, chạy hết. 3. Tự tạo credential. 4. Không MinIO. 5. Vops",
+    "by": "người dùng tại máy",
+    "byId": 0,
+    "at": "2026-10-22T08:41:23.669Z",
+    "via": "session"
+  },
+  "rounds": 10,
+  "phoneClosed": true
+}

@@ -1,0 +1,42 @@
+provider: claude
+model: sonnet
+
+# Test command for this project — used by test-gate nodes as $CONFIG.test_command.
+# Detected and written by /sdlc-onboard-code, or set manually:
+# test_command: npm test
+
+# Quy ước hỏi người, kèm vào lượt bạn gõ thẳng /tên-skill để agent gọi công cụ hỏi
+# thay vì in câu hỏi ra rồi đứng chờ. Mặc định bật, bỏ ghi chú dòng dưới để tắt.
+# Lệnh vsaf doctor luôn nói dòng này đang bật hay tắt.
+# ask_convention: false
+
+isolation:
+  type: none
+  cleanup: after_success
+  exclude:
+    - node_modules
+    - .git
+    - dist
+    - build
+    - .vsaf/storage
+  max_workspaces: 5
+
+# Telemetry — every run emits an OpenTelemetry trace (one span per node).
+# DEPRECATED: langfuse credentials are auto-mapped to Langfuse's OTLP
+# endpoint (traces only). Prefer telemetry.otlp — see README "Telemetry".
+# VSAF_TELEMETRY=off force-disables.
+telemetry:
+  # Which paths the output metrics count — declared by this project's pack.
+  artifacts:
+    include: ["automation_test/"]
+  langfuse:
+    host: https://langfuse.viettel.digital
+    public_key: pk-lf-17e5504d-3a28-47bd-a887-53a417c6a03f
+    secret_key: sk-lf-8049a58f-e436-4b1c-8c6f-d4aad27f15ed
+  # Which paths the output metrics count. Defaults shown.
+  # artifacts:
+  #   include: [".vsaf/docs/"]     # created files here count as artifacts
+  #   exclude: []                  # never counted; added to the engine's own list
+  #   code_roots: []               # extra repos to measure, for a project whose code
+  #                                # lives outside this repo. Empty reads the repos
+  #                                # listed in the workspace file.

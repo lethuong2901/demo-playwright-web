@@ -1,0 +1,24 @@
+{
+  ".cursor/skills": [
+    "autotest-credentials",
+    "autotest-project-docs",
+    "autotest-pw-android",
+    "autotest-pw-api",
+    "autotest-pw-jenkins",
+    "autotest-pw-web",
+    "autotest-rf-android",
+    "autotest-rf-android-best-practices",
+    "autotest-rf-api",
+    "autotest-rf-api-best-practices",
+    "autotest-rf-db",
+    "autotest-rf-ios",
+    "autotest-rf-ios-best-practices",
+    "autotest-rf-jenkins",
+    "autotest-rf-mcp-assist",
+    "autotest-rf-results",
+    "autotest-rf-web",
+    "autotest-rf-web-best-practices",
+    "autotest-scenarios",
+    "autotest-strategy"
+  ]
+}

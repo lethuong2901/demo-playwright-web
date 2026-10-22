@@ -1,0 +1,629 @@
+#!/usr/bin/env python3
+"""Scaffold / detect the Playwright TypeScript framework for the autotest-pw-* skills.
+
+Stdlib only (same rule as autotest-credentials/cred_env.py) so it runs on macOS, Linux and
+Windows PowerShell. NEVER overwrites an existing file — prints CREATED / SKIP (exists) per file.
+
+Usage (run from the project root):
+  python3 pw_scaffold.py state   [--root automation_test]
+  python3 pw_scaffold.py core    [--root automation_test] --base-url URL [--api-base-url URL]
+                                 [--ep-login PATH|none] [--username-field F] [--password-field F]
+                                 [--token-field F] [--token-scheme Bearer|raw] [--web-login]
+                                 [--run-mode parallel|serial]
+        Run AFTER `npm init playwright` on a new project: the untouched default playwright.config.ts is
+        replaced and the framework npm scripts are merged into package.json.
+  python3 pw_scaffold.py android [--root automation_test] --app-package PKG --app-activity ACT
+  python3 pw_scaffold.py android-sync [--root automation_test]
+  python3 pw_scaffold.py jenkins [--root automation_test]
+
+state   → prints one JSON line: {"state": ..., "root": ..., "robot_files": N, "pw_outside": [...], ...}
+core    → copies autotest-pw-web/templates/core, fills placeholders, creates bdd/{features,steps}/{web,api}, data/, results/
+android → copies autotest-pw-android/templates, adds the `android` project + androidTest merge (idempotent)
+android-sync → project scaffolded by an OLDER skill version: brings the device-farm infrastructure files
+          (support/stf.ts, fixtures/android.fixture.ts, config/android.ts) up to the current template — the
+          only command that overwrites, each old file backed up under results/backup/<time>/ first
+jenkins → copies autotest-pw-jenkins/templates (Jenkinsfile + ci/notify.ts); the skill fills CFG afterwards
+Exit codes: 0 OK, 1 usage/IO error.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import sys
+import time
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+SKILLS_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CORE_TPL = os.path.join(SKILLS_DIR, "autotest-pw-web", "templates", "core")
+ANDROID_TPL = os.path.join(SKILLS_DIR, "autotest-pw-android", "templates")
+JENKINS_TPL = os.path.join(SKILLS_DIR, "autotest-pw-jenkins", "templates")
+
+PRUNE = {"automation_test", ".claude", ".vsaf", ".git", "node_modules", "venv", ".venv", "env", "Pods",
+         "build", ".gradle", "DerivedData", "dist", "__pycache__", ".tox", ".idea", ".vscode"}
+
+
+def copy_tree(src: str, dst: str, replacements: dict[str, str] | None = None, skip: set[str] | None = None) -> list[str]:
+    """Copy every file under src into dst, never overwriting. `skip` = rel paths (file or dir) to leave out. Returns report lines."""
+    report = []
+    for base, _dirs, files in os.walk(src):
+        rel_dir = os.path.relpath(base, src)
+        for name in sorted(files):
+            rel = os.path.normpath(os.path.join(rel_dir, name)).replace(os.sep, "/")
+            if skip and any(rel == s or rel.startswith(s + "/") for s in skip):
+                continue
+            source = os.path.join(base, name)
+            if name == "gitignore.txt":
+                report.append(merge_gitignore(source, os.path.normpath(os.path.join(dst, rel_dir, ".gitignore"))))
+                continue
+            target = os.path.normpath(os.path.join(dst, rel_dir, name))
+            if rel_dir == "." and name == "package.json" and os.path.exists(target):
+                report.append(merge_package_json(source, target))
+                continue
+            if rel_dir == "." and name == "playwright.config.ts" and is_npm_init_default(target):
+                os.remove(target)  # untouched boilerplate from `npm init playwright` — nothing of the user's is lost
+                report.append(f"REPLACED (config mặc định của npm init playwright) {os.path.relpath(target)}")
+            if os.path.exists(target):
+                report.append(f"SKIP (exists) {os.path.relpath(target)}")
+                continue
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            if replacements and name.endswith((".ts", ".json")):
+                with open(source, encoding="utf-8") as fh:
+                    text = fh.read()
+                for key, value in replacements.items():
+                    text = text.replace(key, value)
+                with open(target, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(text)
+            else:
+                shutil.copyfile(source, target)
+            report.append(f"CREATED {os.path.relpath(target)}")
+    return report
+
+
+NPM_INIT_MARKER = "See https://playwright.dev/docs/test-configuration"
+
+
+def is_npm_init_default(path: str) -> bool:
+    """True for the untouched playwright.config.ts generated by `npm init playwright` (safe to replace)."""
+    if not os.path.exists(path):
+        return False
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    return NPM_INIT_MARKER in text and "defineBddProject" not in text and "config/env" not in text
+
+
+def merge_package_json(template: str, target: str) -> str:
+    """Add template scripts/engines/private/devDependencies missing from an existing package.json. Never changes existing keys."""
+    with open(template, encoding="utf-8") as fh:
+        tpl = json.load(fh)
+    with open(target, encoding="utf-8") as fh:
+        pkg = json.load(fh)
+    added = []
+    scripts = pkg.setdefault("scripts", {})
+    for key, value in tpl.get("scripts", {}).items():
+        if key not in scripts or (key == "test" and "no test specified" in scripts[key]):
+            scripts[key] = value
+            added.append(key)
+    # devDependencies: thêm gói còn thiếu (pin sẵn) để `npm install` cài đủ, user khỏi cài tay.
+    deps = pkg.setdefault("devDependencies", {})
+    for name, ver in tpl.get("devDependencies", {}).items():
+        if name not in deps:
+            deps[name] = ver
+            added.append(name)
+    for key in ("engines", "private"):
+        if key not in pkg:
+            pkg[key] = tpl[key]
+            added.append(key)
+    if not added:
+        return f"SKIP (exists) {os.path.relpath(target)}"
+    with open(target, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(pkg, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    return f"PATCHED {os.path.relpath(target)} (+{', '.join(added)})"
+
+
+def merge_gitignore(template: str, target: str) -> str:
+    """Append template lines missing from target .gitignore (create it if absent). Never removes lines."""
+    with open(template, encoding="utf-8") as fh:
+        wanted = [line.rstrip("\n") for line in fh if line.strip()]
+    existing: list[str] = []
+    if os.path.exists(target):
+        with open(target, encoding="utf-8") as fh:
+            existing = [line.rstrip("\n") for line in fh]
+    missing = [line for line in wanted if line not in existing]
+    if not missing:
+        return f"SKIP (exists) {os.path.relpath(target)}"
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "a", encoding="utf-8", newline="\n") as fh:
+        if existing and existing[-1] != "":
+            fh.write("\n")
+        fh.write("# Playwright (autotest-pw-*)\n" + "\n".join(missing) + "\n")
+    return f"{'PATCHED' if existing else 'CREATED'} {os.path.relpath(target)} (+{', '.join(missing)})"
+
+
+def patch_file(path: str, old: str, new: str, marker: str) -> str:
+    """Replace `old` with `new` once, unless `marker` is already present (idempotent)."""
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    if marker in text:
+        return f"SKIP (already patched) {os.path.relpath(path)}"
+    if old not in text:
+        return f"MANUAL {os.path.relpath(path)} — không tìm thấy đoạn chuẩn để vá, cần sửa tay: thêm {marker!r}"
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text.replace(old, new, 1))
+    return f"PATCHED {os.path.relpath(path)}"
+
+
+def cmd_state(args: argparse.Namespace) -> int:
+    root = args.root
+    has_config = os.path.exists(os.path.join(root, "playwright.config.ts"))
+    has_fixtures = os.path.exists(os.path.join(root, "fixtures", "index.ts"))
+    has_env = os.path.exists(os.path.join(root, "config", "env.ts"))
+    specs, features, robot = [], [], 0
+    if os.path.isdir(root):
+        for base, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in {"node_modules", "results", ".auth", ".features-gen"}]
+            specs += [os.path.join(base, f) for f in files if f.endswith((".spec.ts", ".setup.ts"))]
+            features += [os.path.join(base, f) for f in files if f.endswith(".feature")]
+            robot += sum(1 for f in files if f.endswith((".robot", ".resource")))
+    outside = []
+    for base, dirs, files in os.walk("."):
+        # Bỏ mọi thư mục ẩn: .claude/.cursor/... chứa bản skill (có playwright.config.ts template) do vsaf cài cho từng công cụ AI
+        dirs[:] = [d for d in dirs if d not in PRUNE and not d.startswith('.')]
+        for f in files:
+            if f.startswith("playwright.config.") or f.endswith((".spec.ts", ".spec.js")):
+                outside.append(os.path.join(base, f))
+    if is_npm_init_default(os.path.join(root, "playwright.config.ts")) and not specs and not features:
+        state = "NEW"  # fresh `npm init playwright` output — scaffold on top of it
+    elif has_config and has_fixtures and has_env:
+        state = "COMPLIANT"
+    elif specs or features or has_config:
+        state = "PARTIAL"
+    elif outside:
+        state = "EXTERNAL"
+    else:
+        state = "NEW"
+    has_android = os.path.exists(os.path.join(root, "fixtures", "android.fixture.ts"))
+    # Project dựng từ bản skill cũ: file kết nối farm không tự đổi khi cài lại skill → đồng bộ ngay tại đây,
+    # không phụ thuộc agent có nhớ chạy `android-sync` hay không.
+    farm_sync = [line for line in android_sync(root) if not line.startswith(("OK ", "SKIP "))] if has_android else []
+    print(json.dumps({
+        "state": state, "root": root, "specs": len(specs), "features": len(features), "robot_files": robot,
+        # bdd = Gherkin + steps (default for new projects); spec = existing test()-style project → keep its style
+        "style": "spec" if specs and not features and not os.path.isdir(os.path.join(root, "bdd")) and any(
+            "tests" + os.sep + p in f for f in specs for p in ("web", "api", "android")) else "bdd",
+        "has_android": has_android,
+        "android_farm_sync": farm_sync,  # UPDATED/PATCHED/WARN đã làm — agent báo lại cho user
+        "has_jenkinsfile": os.path.exists(os.path.join(root, "Jenkinsfile")),
+        "has_node_modules": os.path.isdir(os.path.join(root, "node_modules")),
+        "has_package_json": os.path.exists(os.path.join(root, "package.json")),
+        "npm_init_default_config": is_npm_init_default(os.path.join(root, "playwright.config.ts")),
+        "pw_outside": outside[:20],
+    }, ensure_ascii=False))
+    return 0
+
+
+def write_index(root: str) -> str:
+    """(Re)generate fixtures/index.ts to merge ONLY the platforms actually scaffolded (detected by fixture files)."""
+    fx = os.path.join(root, "fixtures")
+    web = os.path.exists(os.path.join(fx, "web.fixture.ts"))
+    api = os.path.exists(os.path.join(fx, "api.fixture.ts"))
+    android = os.path.exists(os.path.join(fx, "android.fixture.ts"))
+    imports = [
+        "import { mergeTests } from '@playwright/test';",
+        "import { test as bddBase } from 'playwright-bdd';",
+        "import { contextTest } from './context.fixture';",
+    ]
+    merges = ["bddBase", "contextTest"]
+    if web:  # web.fixture độc lập với api.fixture → ghép riêng
+        imports.append("import { webTest } from './web.fixture';")
+        merges.append("webTest")
+    if api:
+        imports.append("import { apiTest } from './api.fixture';")
+        merges.append("apiTest")
+    if android:
+        imports.append("import { androidTest } from './android.fixture';")
+        merges.append("androidTest")
+    header = (
+        "/**\n * The ONLY test import:  import { test, expect } from '@fixtures/index';\n"
+        " * Chain tự sinh theo platform đã scaffold (context + web/api + android).\n */\n"
+    )
+    body = (
+        header
+        + "\n".join(imports)
+        + f"\n\nexport const test = mergeTests({', '.join(merges)});\n"
+        + "export { expect } from '@playwright/test';\n"
+    )
+    path = os.path.join(fx, "index.ts")
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(body)
+    on = [p for p, flag in (("web", web), ("api", api), ("android", android)) if flag]
+    return f"WROTE {os.path.relpath(path)} (platforms: {', '.join(on) or 'none'})"
+
+
+def write_readme(root: str) -> str:
+    """Tự sinh README.md mô tả cấu trúc + cách chạy, theo đúng platform đã scaffold (phát hiện qua thư mục)."""
+    web = os.path.exists(os.path.join(root, "pages"))
+    android = os.path.exists(os.path.join(root, "functions"))
+    api_support = os.path.exists(os.path.join(root, "services"))  # tầng gọi API (preset/verify) — có ở mọi project
+    api_target = os.path.exists(os.path.join(root, "bdd", "features", "api"))  # API là test-target riêng
+    names = [n for n, on in (("Web", web), ("API", api_target), ("Android", android)) if on] or ["(chưa có platform)"]
+
+    run_lines = []
+    if web:
+        run_lines.append("npx bddgen && npx playwright test --project=web-chromium --headed   # test Web (mở Chrome để xem)")
+    if api_target:
+        run_lines.append("npx bddgen && npx playwright test --project=api            # test API (không mở trình duyệt)")
+    if android:
+        run_lines.append("npx bddgen && npx playwright test --project=android --workers=1   # test Android (1 thiết bị)")
+    run_block = "\n".join(run_lines) or "npx bddgen && npx playwright test"
+
+    struct = ["```", "automation_test/",
+              "  bdd/", "    features/<feature>.feature   # Kịch bản Gherkin (tiếng Việt): 1 Scenario = 1 TC. Tag @web/@api/@android ở đầu Feature định tuyến project",
+              "    steps/<feature>.steps.ts     # Code nối từng câu Given/When/Then vào hành động",
+              "    steps/bdd.ts                 # Khai báo Given/When/Then dùng chung + tag @auth:<role>",
+              "    steps/common/                # Các step dùng lại giữa nhiều feature"]
+    if web:
+        struct += ["  pages/                                     # POM Web: mỗi màn 1 Page object; POManager gom lại",
+                   "    POManager.ts  base/BasePage.ts"]
+    if android:
+        struct += ["  functions/                                 # Android theo FUNCTION: mỗi object = 1 chức năng (trải nhiều màn); FunctionManager gom lại",
+                   "    FunctionManager.ts  base/BaseFunction.ts"]
+    if api_support:
+        api_role = "test API, và" if api_target else "dùng để"
+        struct += [f"  services/                                  # Tầng gọi API ({api_role} preset/verify dữ liệu cho test): ApiClient + service",
+                   "    base/ApiClient.ts  auth/AuthService.ts"]
+    struct += ["  fixtures/                                  # 'Đồ nghề' bơm vào test (page/device/api...) — index.ts là nơi DUY NHẤT test import",
+               "  config/                                    # env.ts (đọc .env), timeouts.ts, storage.ts",
+               "  data/<feature>.json                        # DỮ LIỆU test (JSON, key \"data\", mỗi TC 1 entry) — không hardcode trong step",
+               "  support/                                   # Tiện ích: data.ts (đọc JSON)" + (", ui.ts (điều khiển Android qua shell), stf.ts (device farm)" if android else ""),
+               "  ci/                                        # summarize.ts (tổng hợp kết quả), collage/notify",
+               "  playwright.config.ts                       # Cấu hình: danh sách 'project' (web/api/android), reporter",
+               "  .env                                       # Tài khoản/secret chạy test — KHÔNG commit (tự điền)",
+               "  results/                                   # Kết quả, ảnh, báo cáo (tự sinh, gitignored)", "```"]
+    struct_block = "\n".join(struct)
+
+    farm_block = ""
+    if android:
+        farm_block = (
+            "\n## Chạy Android trên device farm (MCloud)\n"
+            "Chỉ cần **link control** của máy đã bấm *Use* trên STF:\n"
+            "```bash\n"
+            "# Nháy ĐƠN quanh link: URL có '!' → zsh báo \"event not found\" nếu dùng nháy kép.\n"
+            "ANDROID_DEVICE_URL='http://<host>/#!/control/<serial>' \\\n"
+            "  npx playwright test --project=android --workers=1\n"
+            "# PowerShell: $env:ANDROID_DEVICE_URL=\"http://<host>/#!/control/<serial>\"; npx playwright test --project=android --workers=1\n"
+            "```\n"
+            "Lần đầu mỗi máy chạy test: `npx tsx support/stf.ts doctor \"<link>\"` để kiểm tra + đăng ký ADB key.\n"
+            "Màn có bàn phím (PIN/OTP) điều khiển bằng `support/ui.ts` (uiautomator dump + input) thay vì selector thường.\n"
+        )
+
+    api_note = (
+        "\n> **API là tầng hỗ trợ:** `services/` + fixture `api`/`authedApi` có sẵn để preset/verify dữ liệu "
+        "trong step (không phải test API riêng; dùng `--platforms …,api` nếu muốn chạy test API thành project).\n"
+        if api_support and not api_target
+        else ""
+    )
+    body = f"""# Automation Test — Playwright (TypeScript, kiểu Cucumber/BDD)
+
+Bộ kiểm thử tự động cho: **{', '.join(names)}**. Test viết bằng **Gherkin** (tiếng Việt, dễ đọc) ở
+`bdd/features/`, phần code nối câu ở `bdd/steps/`. Chỉ dùng **TypeScript**.
+{api_note}
+
+## Cài đặt (lần đầu)
+```bash
+cd automation_test
+npm install            # hoặc: npm ci (khi đã có package-lock.json)
+{'npx playwright install chromium   # trình duyệt cho test Web' if web else ''}
+{'npx playwright install android     # driver cho test Android' if android else ''}
+```
+
+## Cách chạy
+```bash
+cd automation_test
+{run_block}
+npm run summary        # in bảng kết quả gọn + tạo results/summary.json
+```
+- `npx bddgen` sinh file test thật từ `.feature` vào `.features-gen/` (tự chạy trong các npm script).
+- Chạy 1 test case theo tag: thêm `--grep "@TC-001\\b"`. Chạy tuần tự: `npm run test:serial`.
+
+## Cấu trúc thư mục
+{struct_block}
+
+## Luồng viết 1 test case
+1. Viết kịch bản vào `bdd/features/<feature>.feature` — tag `@web`/`@api`/`@android` ở đầu Feature, mỗi `Scenario` = 1 TC gắn `@TC-NNN`.
+2. `npx bddgen` sẽ in ra các câu step còn thiếu → dán vào `bdd/steps/<feature>.steps.ts`.
+3. Mỗi step gọi Page/Screen/Service object (không viết locator thẳng trong step).
+4. Dữ liệu để ở `data/<feature>.json`, đọc bằng `loadData('<feature>')`.
+
+## Dữ liệu test & credential
+- **Dữ liệu**: `data/<feature>.json`, dạng `{{ "data": {{ "TC-001": {{ ... }} }} }}` (JSON — **không dùng YAML**).
+- **Secret** (mật khẩu, token): điền vào `automation_test/.env` (đã gitignore), **không** gõ vào test hay chat.
+
+## Báo cáo
+- `npm run summary` — bảng gọn + `results/summary.json`.
+- `npm run report` — báo cáo HTML của Playwright (`results/html-report/`).
+- `npm run report:monocart` — báo cáo Monocart (`results/monocart-report/index.html`, mở thẳng file cũng được).
+{farm_block}"""
+
+    path = os.path.join(root, "README.md")
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(body)
+    return f"WROTE {os.path.relpath(path)} (README cho: {', '.join(names)})"
+
+
+def remove_project(cfg_path: str, name: str) -> str:
+    """Remove the `{ ...bdd('<name>', ...), ... }` project block from playwright.config.ts (brace-balanced)."""
+    with open(cfg_path, encoding="utf-8") as fh:
+        lines = fh.read().split("\n")
+    out: list[str] = []
+    i = 0
+    marker = f"bdd('{name}'"
+    while i < len(lines):
+        if lines[i].strip() == "{":
+            depth = 0
+            j = i
+            block: list[str] = []
+            while j < len(lines):
+                block.append(lines[j])
+                depth += lines[j].count("{") - lines[j].count("}")
+                if depth == 0 and j > i:
+                    break
+                j += 1
+            if any(marker in b for b in block):
+                i = j + 1  # drop this block
+                continue
+            out.extend(block)
+            i = j + 1
+            continue
+        out.append(lines[i])
+        i += 1
+    with open(cfg_path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(out))
+    return f"PATCHED {os.path.relpath(cfg_path)} (bỏ project {name})"
+
+
+def cmd_core(args: argparse.Namespace) -> int:
+    api_base = args.api_base_url or args.base_url
+    if not api_base.endswith("/"):
+        api_base += "/"
+    replacements = {
+        "__BASE_URL__": args.base_url,
+        "__API_BASE_URL__": api_base,
+        "__EP_LOGIN__": args.ep_login,
+        "optionalEnv('LOGIN_USERNAME_FIELD', 'username')": f"optionalEnv('LOGIN_USERNAME_FIELD', '{args.username_field}')",
+        "optionalEnv('LOGIN_PASSWORD_FIELD', 'password')": f"optionalEnv('LOGIN_PASSWORD_FIELD', '{args.password_field}')",
+        "optionalEnv('TOKEN_FIELD', 'token')": f"optionalEnv('TOKEN_FIELD', '{args.token_field}')",
+        "optionalEnv('TOKEN_SCHEME', 'Bearer')": f"optionalEnv('TOKEN_SCHEME', '{args.token_scheme}')",
+        "optionalEnv('RUN_MODE', 'parallel')": f"optionalEnv('RUN_MODE', '{args.run_mode}')",
+    }
+    platforms = {p.strip() for p in args.platforms.split(",") if p.strip()}
+    # API (services/ + api.fixture) LUÔN có — tầng hỗ trợ preset/verify cho web/android, và là test-target khi 'api'.
+    # --platforms chỉ tắt UI Web (pages) và tắt API-là-test-target (project `api` + thư mục feature api).
+    skip: set[str] = set()
+    # Cấu trúc PHẲNG: feature ở bdd/features/, step ở bdd/steps/ (định tuyến project theo tag @web/@api/@android).
+    mkdirs = ["bdd/features", "bdd/steps", "tests", "data", "results"]
+    if "web" not in platforms:
+        skip |= {"pages", "fixtures/web.fixture.ts"}  # không test Web → bỏ POM Web
+    report = copy_tree(CORE_TPL, args.root, replacements, skip)
+    for sub in mkdirs:
+        os.makedirs(os.path.join(args.root, sub), exist_ok=True)
+    report.append(write_index(args.root))  # chỉ ghép platform đã chọn
+    cfg = os.path.join(args.root, "playwright.config.ts")
+    if "web" not in platforms:
+        report.append(remove_project(cfg, "web-chromium"))
+    if "api" not in platforms:
+        report.append(remove_project(cfg, "api"))
+    if args.web_login:
+        cfg = os.path.join(args.root, "playwright.config.ts")
+        report.append(patch_file(cfg, "    // { name: 'setup', testDir: './tests/setup', testMatch: /.*\\.setup\\.ts/ },",
+                                 "    { name: 'setup', testDir: './tests/setup', testMatch: /.*\\.setup\\.ts/ },",
+                                 "    { name: 'setup'"))
+        report.append(patch_file(cfg, "      // dependencies: ['setup'],", "      dependencies: ['setup'],",
+                                 "      dependencies: ['setup'],"))
+        os.makedirs(os.path.join(args.root, "tests", "setup"), exist_ok=True)
+    report.append(write_readme(args.root))
+    print("\n".join(report))
+    return 0
+
+
+def cmd_android(args: argparse.Namespace) -> int:
+    replacements = {"__APP_PACKAGE__": args.app_package, "__APP_ACTIVITY__": args.app_activity}
+    report = copy_tree(ANDROID_TPL, args.root, replacements)
+    for sub in ("bdd/features", "bdd/steps"):  # cấu trúc phẳng
+        os.makedirs(os.path.join(args.root, sub), exist_ok=True)
+    report.append(write_index(args.root))  # thêm androidTest vào chain (detect theo file fixture)
+    cfg = os.path.join(args.root, "playwright.config.ts")
+    android_project = ("    {\n      ...bdd('android', 'android'),\n"
+                       "      fullyParallel: false,\n"
+                       "      // Chạy lại 1 lần: máy farm rớt kết nối giữa chừng thì worker kết nối lại, test chạy lại trên kết nối mới\n"
+                       "      retries: Number(process.env.ANDROID_RETRIES ?? 1),\n"
+                       "      // Thao tác native chậm hơn web nhiều (mỗi bước vài giây trên emulator/farm)\n"
+                       "      timeout: 180_000,\n    },\n  ],\n});")
+    report.append(patch_file(cfg, "  ],\n});", android_project, "bdd('android'"))
+    report.append(write_readme(args.root))  # README đã có android
+    report += android_sync(args.root)  # project có sẵn từ bản cũ: copy_tree SKIP file cũ → đồng bộ hạ tầng farm
+    print("\n".join(report))
+    return 0
+
+
+# Hạ tầng kết nối thiết bị / device farm: người dùng không sửa, phải đi cùng nhau (fixture import từ stf.ts).
+ANDROID_MANAGED = ("support/stf.ts", "fixtures/android.fixture.ts", "config/android.ts", "support/sync-farm.ts")
+# globalSetup chép bản mới từ skill sang project trước mỗi lượt chạy — cả khi chạy `npx playwright test` không qua skill.
+GLOBAL_SETUP = "  // Android: trước mỗi lượt chạy, cập nhật file kết nối farm theo skill autotest-pw-android đang cài\n  globalSetup: './support/sync-farm.ts',\n"
+# Dấu vết của chế độ farm đã bỏ (dán Remote debug tay, refresh token) — còn trong file nào thì cảnh báo.
+ANDROID_STALE = re.compile(r"ANDROID_REMOTE_ADB|REFRESH_TOKEN|connectRemote|remoteAdb|stf\.ts (token|key)\b")
+
+
+def _app_defaults(text: str) -> dict[str, str]:
+    """Giá trị mặc định APP_PACKAGE / APP_ACTIVITY trong config/android.ts cũ (để giữ nguyên khi thay file)."""
+    found = {}
+    for key, name in (("__APP_PACKAGE__", "APP_PACKAGE"), ("__APP_ACTIVITY__", "APP_ACTIVITY")):
+        m = re.search(r"optionalEnv\('" + name + r"',\s*'([^']*)'\)", text)
+        if m:
+            found[key] = m.group(1)
+    return found
+
+
+def android_sync(root: str) -> list[str]:
+    """Đưa các file hạ tầng farm của project về đúng bản template hiện tại (backup bản cũ trước khi ghi)."""
+    if not os.path.exists(os.path.join(root, "fixtures", "android.fixture.ts")):
+        return [f"SKIP android-sync (chưa có android trong {root})"]
+    report, backup = [], os.path.join(root, "results", "backup", time.strftime("%Y%m%d-%H%M%S"))
+    for rel in ANDROID_MANAGED:
+        target = os.path.join(root, rel)
+        with open(os.path.join(ANDROID_TPL, rel), encoding="utf-8") as fh:
+            wanted = fh.read()
+        current = ""
+        if os.path.exists(target):
+            with open(target, encoding="utf-8") as fh:
+                current = fh.read()
+        if rel == "config/android.ts":
+            defaults = _app_defaults(current)
+            if current and len(defaults) < 2:
+                report.append(f"WARN không đọc được APP_PACKAGE/APP_ACTIVITY trong {os.path.relpath(target)} — giữ nguyên, sửa tay theo template")
+                continue
+            for key, value in defaults.items():
+                wanted = wanted.replace(key, value)
+        if current == wanted:
+            report.append(f"OK (đã mới nhất) {os.path.relpath(target)}")
+            continue
+        if current:
+            saved = os.path.join(backup, rel)
+            os.makedirs(os.path.dirname(saved), exist_ok=True)
+            shutil.copyfile(target, saved)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(wanted)
+        report.append(f"UPDATED {os.path.relpath(target)}" + (f" (bản cũ: {os.path.relpath(saved)})" if current else ""))
+    cfg = os.path.join(root, "playwright.config.ts")
+    if os.path.exists(cfg):
+        with open(cfg, encoding="utf-8") as fh:
+            cfg_text = fh.read()
+        single = re.search(r"^(\s*)globalSetup:\s*(['\"][^'\"]+['\"])\s*,", cfg_text, re.M)
+        if "sync-farm" in cfg_text:
+            report.append(f"SKIP (already patched) {os.path.relpath(cfg)}")
+        elif single:  # globalSetup có sẵn (vd ./ci/allure-clean.ts) → gộp thành mảng, Playwright ≥1.49 chạy lần lượt
+            merged = f"{single.group(1)}globalSetup: [{single.group(2)}, './support/sync-farm.ts'],"
+            with open(cfg, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(cfg_text[:single.start()] + merged + cfg_text[single.end():])
+            report.append(f"PATCHED {os.path.relpath(cfg)} (globalSetup + sync-farm)")
+        elif "globalSetup" in cfg_text:
+            report.append(f"WARN {os.path.relpath(cfg)} có globalSetup dạng khác — thêm './support/sync-farm.ts' vào đó để file farm tự cập nhật")
+        else:
+            report.append(patch_file(cfg, "export default defineConfig({\n", "export default defineConfig({\n" + GLOBAL_SETUP, "sync-farm"))
+        report.append(patch_file(
+            cfg,
+            "      fullyParallel: false,\n      retries: 0,\n",
+            "      fullyParallel: false,\n"
+            "      // Chạy lại 1 lần: máy farm rớt kết nối giữa chừng thì worker kết nối lại, test chạy lại trên kết nối mới\n"
+            "      retries: Number(process.env.ANDROID_RETRIES ?? 1),\n",
+            "ANDROID_RETRIES",
+        ))
+    for base, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in ("node_modules", "results", ".features-gen", ".auth")]
+        for name in files:
+            path = os.path.join(base, name)
+            if os.path.relpath(path, root).replace(os.sep, "/") in ANDROID_MANAGED:
+                continue
+            if not name.endswith((".ts", ".feature", ".md", ".env", ".example")) and name != "Jenkinsfile":
+                continue
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    if ANDROID_STALE.search(fh.read()):
+                        report.append(f"WARN {os.path.relpath(path)} còn nhắc chế độ farm đã bỏ (ANDROID_REMOTE_ADB / refresh token) — sửa sang ANDROID_DEVICE_URL")
+            except (OSError, UnicodeDecodeError):
+                pass
+    return report
+
+
+def cmd_android_sync(args: argparse.Namespace) -> int:
+    print("\n".join(android_sync(args.root)))
+    return 0
+
+
+def cmd_jenkins(args: argparse.Namespace) -> int:
+    report = copy_tree(os.path.join(JENKINS_TPL, "ci"), os.path.join(args.root, "ci"))
+    report += _copy_one(os.path.join(JENKINS_TPL, "Jenkinsfile.txt"), os.path.join(args.root, "Jenkinsfile"))
+    report.append(_ensure_ci_scripts(os.path.join(args.root, "package.json")))
+    print("\n".join(report))
+    return 0
+
+
+def _ensure_ci_scripts(target: str) -> str:
+    """Project scaffold trước khi có ci/tc-catalog.ts: thêm script ci:notify / ci:catalog còn thiếu, không đổi key có sẵn."""
+    if not os.path.exists(target):
+        return f"SKIP (no package.json) {os.path.relpath(target)}"
+    with open(target, encoding="utf-8") as fh:
+        pkg = json.load(fh)
+    scripts = pkg.setdefault("scripts", {})
+    defaults = {"ci:notify": "tsx ci/notify.ts", "ci:catalog": "tsx ci/tc-catalog.ts"}
+    added = [k for k in defaults if k not in scripts]
+    if not added:
+        return f"SKIP (exists) {os.path.relpath(target)} scripts"
+    for key in added:
+        scripts[key] = defaults[key]
+    with open(target, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(pkg, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    return f"PATCHED {os.path.relpath(target)} (+{', '.join(added)})"
+
+
+def _copy_one(src: str, dst: str) -> list[str]:
+    if os.path.exists(dst):
+        return [f"SKIP (exists) {os.path.relpath(dst)}"]
+    os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+    shutil.copyfile(src, dst)
+    return [f"CREATED {os.path.relpath(dst)}"]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_state = sub.add_parser("state")
+    p_state.add_argument("--root", default="automation_test")
+    p_state.set_defaults(func=cmd_state)
+
+    p_core = sub.add_parser("core")
+    p_core.add_argument("--root", default="automation_test")
+    p_core.add_argument("--base-url", required=True)
+    p_core.add_argument("--api-base-url", default="")
+    p_core.add_argument("--ep-login", default="none")
+    p_core.add_argument("--username-field", default="username")
+    p_core.add_argument("--password-field", default="password")
+    p_core.add_argument("--token-field", default="token")
+    p_core.add_argument("--token-scheme", default="Bearer", choices=["Bearer", "raw"])
+    p_core.add_argument("--web-login", action="store_true", help="bật project setup (storageState) cho web cần đăng nhập")
+    p_core.add_argument("--run-mode", default="parallel", choices=["parallel", "serial"], help="mặc định chạy song song hay tuần tự")
+    p_core.add_argument("--platforms", default="web,api", help="layer cần scaffold (web,api,android — phẩy ngăn cách). Vd android-only: --platforms android (bỏ pages/ services/ web+api fixtures/projects cho gọn)")
+    p_core.set_defaults(func=cmd_core)
+
+    p_android = sub.add_parser("android")
+    p_android.add_argument("--root", default="automation_test")
+    p_android.add_argument("--app-package", required=True)
+    p_android.add_argument("--app-activity", required=True)
+    p_android.set_defaults(func=cmd_android)
+
+    p_sync = sub.add_parser("android-sync")
+    p_sync.add_argument("--root", default="automation_test")
+    p_sync.set_defaults(func=cmd_android_sync)
+
+    p_jenkins = sub.add_parser("jenkins")
+    p_jenkins.add_argument("--root", default="automation_test")
+    p_jenkins.set_defaults(func=cmd_jenkins)
+
+    args = parser.parse_args()
+    try:
+        return args.func(args)
+    except OSError as exc:
+        print(f"ERROR {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

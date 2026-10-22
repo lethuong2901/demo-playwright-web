@@ -1,0 +1,17 @@
+{
+  "askId": "ask-817239",
+  "kind": "ask",
+  "runId": null,
+  "type": "text",
+  "question": "Cung cấp: 1) Tên job (gợi ý: demo-playwright-web), 2) URL repo Git, 3) Folder trên Jenkins (bỏ trống = root)",
+  "context": "Đang tạo job Jenkins Multibranch Pipeline. Jenkinsfile đã validate OK (typecheck passed, 1 feature 7 TC). Project chưa có git remote nên cần URL repo. Jenkins có sẵn folder mock-epass và sdk, hoặc tạo ở root.",
+  "options": [],
+  "status": "pending",
+  "createdAt": "2026-10-22T08:51:46.855Z",
+  "expiresAt": "2026-10-22T09:21:46.855Z",
+  "nonce": "skoimllk",
+  "messageRef": null,
+  "answer": null,
+  "rounds": 10,
+  "phoneClosed": true
+}

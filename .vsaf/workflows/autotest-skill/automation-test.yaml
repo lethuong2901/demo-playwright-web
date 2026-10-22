@@ -1,0 +1,191 @@
+name: automation-test
+description: "Automation pipeline — Domain Docs → Test Scenarios → Test Strategy → Automate (Robot Framework: Web/Android/iOS/API · Playwright TS: Web/Android/API) → CI/CD"
+nodes:
+  - id: docs
+    command: autotest-project-docs
+    workspace: false
+
+  - id: scenarios
+    command: autotest-scenarios
+    depends_on: [docs]
+    workspace: false
+
+  - id: strategy
+    command: autotest-strategy
+    depends_on: [scenarios]
+    workspace: false
+
+  - id: platform-select
+    prompt: |
+      Feature/request: $ARGUMENTS
+
+      Output of node "strategy" (automation strategy doc it produced/updated):
+      $strategy.output
+
+      Xác định 2 thứ cho lượt chạy này: CÔNG CỤ (engine) và NỀN TẢNG (platform).
+
+      ENGINE — rf (Robot Framework) | pw (Playwright TypeScript):
+      BẮT BUỘC NGƯỜI DÙNG CHỌN. Ngoại lệ DUY NHẤT: $ARGUMENTS của lượt chạy này nêu
+      rõ công cụ ("playwright", "pw", "typescript" → pw; "robot", "rf", "robot
+      framework" → rf) — đó chính là lựa chọn của người dùng, dùng luôn.
+      Còn lại LUÔN HỎI, kể cả khi đã có gợi ý. Gợi ý chỉ để ghi kèm câu hỏi, KHÔNG
+      được tự chốt từ đó:
+        · dòng `Tool:` trong strategy doc ở trên (ghi kèm nguồn của nó);
+        · code có sẵn trong `automation_test/`: `playwright.config.ts` → pw,
+          file `.robot` → rf (project đã có code thì nên giữ cùng công cụ);
+        · rf: ổn định, đủ web/android/ios/api · pw: web/api ổn định, android
+          thử nghiệm, không có iOS.
+
+      PLATFORM — web | android | ios | api:
+      - $ARGUMENTS nêu rõ (vd "web", "android", "ios", "api", tên app mobile,
+        URL web) → dùng luôn.
+      - Strategy doc ở trên đã nêu rõ platform/phạm vi automation → dùng theo đó.
+      - Feature cần nhiều nền tảng → hỏi người dùng chọn 1 nền tảng chạy trước
+        (workflow chạy tuần tự từng nền tảng; chạy lại workflow cho nền tảng còn lại).
+
+      RÀNG BUỘC:
+      - Playwright KHÔNG hỗ trợ iOS. ios luôn đi với rf. Người dùng chọn pw + ios →
+        giải thích rồi hỏi: chuyển sang rf cho iOS, hay chọn nền tảng khác với pw.
+      - pw + android là mức thử nghiệm. Nếu người dùng KHÔNG chủ động yêu cầu
+        Playwright thì đề xuất rf cho android. Nếu họ vẫn chọn pw thì làm theo
+        và nhắc một câu là đang thử nghiệm.
+
+      Mọi điều còn mơ hồ (engine, platform, hoặc cả hai) → gộp vào MỘT câu hỏi
+      duy nhất, liệt kê lựa chọn có đánh số, chờ người dùng trả lời rồi mới tiếp
+      tục. KHÔNG tự đoán khi thực sự mơ hồ.
+
+      Kết thúc câu trả lời bằng đúng một khối JSON (không thêm chữ nào khác
+      sau khối này). target = "<engine>-<platform>":
+      ```json
+      {"engine": "<rf|pw>", "platform": "<web|android|ios|api>", "target": "<rf-web|rf-android|rf-ios|rf-api|pw-web|pw-android|pw-api>"}
+      ```
+    depends_on: [strategy]
+    workspace: false
+    output_format:
+      type: object
+      properties:
+        engine:
+          type: string
+          enum: [rf, pw]
+        platform:
+          type: string
+          enum: [web, android, ios, api]
+        target:
+          type: string
+          enum: [rf-web, rf-android, rf-ios, rf-api, pw-web, pw-android, pw-api]
+      required: [engine, platform, target]
+
+  # ── Robot Framework ─────────────────────────────────────────────────────────
+  - id: automate-rf-web
+    command: autotest-rf-web
+    depends_on: [platform-select]
+    when: "$platform-select.output.target == 'rf-web'"
+    workspace: false
+
+  - id: automate-rf-android
+    command: autotest-rf-android
+    depends_on: [platform-select]
+    when: "$platform-select.output.target == 'rf-android'"
+    workspace: false
+
+  - id: automate-rf-ios
+    command: autotest-rf-ios
+    depends_on: [platform-select]
+    when: "$platform-select.output.target == 'rf-ios'"
+    workspace: false
+
+  - id: automate-rf-api
+    command: autotest-rf-api
+    depends_on: [platform-select]
+    when: "$platform-select.output.target == 'rf-api'"
+    workspace: false
+
+  # ── Playwright TypeScript (không có iOS) ────────────────────────────────────
+  - id: automate-pw-web
+    command: autotest-pw-web
+    depends_on: [platform-select]
+    when: "$platform-select.output.target == 'pw-web'"
+    workspace: false
+
+  - id: automate-pw-android
+    command: autotest-pw-android
+    depends_on: [platform-select]
+    when: "$platform-select.output.target == 'pw-android'"
+    workspace: false
+
+  - id: automate-pw-api
+    command: autotest-pw-api
+    depends_on: [platform-select]
+    when: "$platform-select.output.target == 'pw-api'"
+    workspace: false
+
+  # ── CI/CD — mỗi engine một node. one_success: node của engine không được chọn
+  # có mọi dependency bị skip nên tự skip theo.
+  # Trước mỗi CI/CD node có node confirm để user chọn có setup Jenkins hay không.
+
+  - id: cicd-rf-confirm
+    prompt: |
+      Automation tests đã hoàn thành với Robot Framework.
+
+      Bạn có muốn setup **Jenkins CI/CD** cho pipeline này không?
+      - **1. Có** — Tiếp tục setup Jenkins (tạo Jenkinsfile, cấu hình pipeline)
+      - **2. Không** — Bỏ qua, kết thúc workflow
+
+      Trả lời bằng JSON:
+      ```json
+      {"setup_jenkins": true}
+      ```
+      hoặc
+      ```json
+      {"setup_jenkins": false}
+      ```
+    depends_on: [automate-rf-web, automate-rf-android, automate-rf-ios, automate-rf-api]
+    trigger_rule: one_success
+    workspace: false
+    output_format:
+      type: object
+      properties:
+        setup_jenkins:
+          type: boolean
+      required: [setup_jenkins]
+
+  - id: cicd-rf
+    command: autotest-rf-jenkins
+    depends_on: [cicd-rf-confirm]
+    when: "$cicd-rf-confirm.output.setup_jenkins == true"
+    workspace: false
+
+  - id: cicd-pw-confirm
+    prompt: |
+      Automation tests đã hoàn thành với Playwright TypeScript.
+
+      Bạn có muốn setup **Jenkins CI/CD** cho pipeline này không?
+      - **1. Có** — Tiếp tục setup Jenkins (tạo Jenkinsfile, cấu hình pipeline)
+      - **2. Không** — Bỏ qua, kết thúc workflow
+
+      LƯU Ý: Trả lời "có", "1", "yes" hoặc "setup" để tiếp tục.
+      Trả lời "không", "2", "no", "skip" hoặc "bỏ qua" để kết thúc.
+
+      Trả lời bằng JSON:
+      ```json
+      {"setup_jenkins": true}
+      ```
+      hoặc
+      ```json
+      {"setup_jenkins": false}
+      ```
+    depends_on: [automate-pw-web, automate-pw-android, automate-pw-api]
+    trigger_rule: one_success
+    workspace: false
+    output_format:
+      type: object
+      properties:
+        setup_jenkins:
+          type: boolean
+      required: [setup_jenkins]
+
+  - id: cicd-pw
+    command: autotest-pw-jenkins
+    depends_on: [cicd-pw-confirm]
+    when: "$cicd-pw-confirm.output.setup_jenkins == true"
+    workspace: false

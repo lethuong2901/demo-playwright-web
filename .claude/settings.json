@@ -1,0 +1,75 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d);require('fs').mkdirSync('.vsaf',{recursive:true});require('fs').writeFileSync('.vsaf/.claude-session',j.session_id||'')}catch{}})\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "vsaf telemetry skill-open"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__vsaf__vsaf_ask",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "vsaf telemetry ask-echo"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "vsaf telemetry skill-open --from-prompt"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "vsaf telemetry skill-close"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "vsaf telemetry skill-close --final"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "vsaf telemetry permission-ask"
+          }
+        ]
+      }
+    ]
+  }
+}

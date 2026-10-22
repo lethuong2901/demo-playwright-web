@@ -1,0 +1,6 @@
+tc,title,method,url,request_body,response_status_code,response_body,auth,tags
+TC-010,Lấy bài viết theo id,GET,/posts/1,,200,"{""id"": 1, ""userId"": 1}",,@smoke
+TC-011,"Tạo bài viết, tiêu đề sinh ngẫu nhiên",POST,/posts,"{""title"": ""INPUT_DATA:string:8"", ""body"": ""ref INPUT_DATA:uuid"", ""userId"": 1}",201,"{""userId"": 1}",,
+TC-012,Lọc bài viết theo userId (assert mảng),GET,/posts,"{""userId"": 1}",200,"[{""userId"": 1}, {""userId"": 1}]",,
+TC-013,Bài viết không tồn tại,GET,/posts/999999,,404,,no,
+TC-014,Cập nhật bài viết,PUT,/posts/1,"{""id"": 1, ""title"": ""t"", ""body"": ""b"", ""userId"": 1}",200,"{""title"": ""t""}",,

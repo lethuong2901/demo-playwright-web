@@ -1,0 +1,22 @@
+{
+  "askId": "ask-01802d",
+  "kind": "ask",
+  "runId": null,
+  "type": "text",
+  "question": "Cung cấp thông tin Vops: 1) Credential ID trên Jenkins (gợi ý: demoblaze-vops), 2) Room ID, 3) Group Link",
+  "context": "Đang cấu hình Vops notification cho pipeline Jenkins Playwright. Cần 3 giá trị: tên credential sẽ tạo trên Jenkins (Username with password chứa X-User-Id và X-Auth-Token), Room ID phòng chat Vops, và link nhóm Vops. Không cần gửi token/mật khẩu.",
+  "options": [],
+  "status": "answered",
+  "createdAt": "2026-10-22T08:41:32.615Z",
+  "expiresAt": "2026-10-22T09:11:32.614Z",
+  "nonce": "unxspbec",
+  "messageRef": null,
+  "answer": {
+    "value": "Chưa rõ có Jenkins và tài khoản gì trên máy",
+    "by": "người dùng tại máy",
+    "byId": 0,
+    "at": "2026-10-22T08:43:07.841Z",
+    "via": "session"
+  },
+  "rounds": 8
+}
