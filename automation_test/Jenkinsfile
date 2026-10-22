@@ -267,6 +267,7 @@ pipeline {
   triggers { cron(CFG.cron) }
 
   environment {
+    PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
     CI = 'true'
     TEST_ENV = "${params.ENV ?: CFG.environments[0]}"
     TEST_ACCOUNT = "${(params.ENV ?: CFG.environments[0]).toUpperCase()}_${params.PROJECT ?: 'all'}"
