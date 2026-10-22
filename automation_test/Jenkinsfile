@@ -391,9 +391,12 @@ pipeline {
             }
           }
 
-          def s = new groovy.json.JsonSlurperClassic().parseText(readFile('results/summary.json'))
+          // Parse summary.json bằng shell (tránh sandbox restriction)
+          def summaryText = sh(script: '''python3 -c "import json; s=json.load(open('results/summary.json')); print(f\\"{s['total']}|{s['passed']}|{s['failed']}|{s['skipped']}|{s.get('knownIssue',0)}|{s.get('flaky',0)}\\")"''', returnStdout: true).trim()
+          def parts = summaryText.split('\\|')
+          def total = parts[0], passed = parts[1], failed = parts[2], skipped = parts[3], knownIssue = parts[4], flaky = parts[5]
           currentBuild.description = "${params.ENV.toUpperCase()} · ${params.PROJECT}<br/>" +
-            "TOTAL ${s.total} · pass ${s.passed} · fail ${s.failed} · skip ${s.skipped} · known-bug ${s.knownIssue} · flaky ${s.flaky}<br/>" +
+            "TOTAL ${total} · pass ${passed} · fail ${failed} · skip ${skipped} · known-bug ${knownIssue} · flaky ${flaky}<br/>" +
             "<a href='${env.REPORT_URL}'>Report</a>" + (env.SCREENSHOT_URL ? " · <a href='${env.SCREENSHOT_URL}'>Screenshot</a>" : '')
 
           if (params.NOTIFY) {
