@@ -8,8 +8,7 @@
 // Cấu hình DUY NHẤT cần sửa là khối CFG bên dưới — không sửa stage để bật/tắt tính năng.
 //
 // Plugin cần: Pipeline, Git, Credentials Binding, JUnit, HTML Publisher, Pipeline Utility Steps
-// (readJSON), Timestamper, Active Choices (chọn feature/TC bằng checkbox). Tuỳ chọn: Lockable Resources
-// (androidLockLabel), Docker Pipeline (dockerImage).
+// (readJSON), Timestamper. Tuỳ chọn: Lockable Resources (androidLockLabel), Docker Pipeline (dockerImage).
 // =====================================================================================
 
 // Không có `def`: CFG phải là biến binding thì các hàm helper bên dưới mới thấy được.
@@ -252,14 +251,8 @@ pipeline {
   parameters {
     choice(name: 'ENV', choices: CFG.environments, description: 'Môi trường chạy test')
     choice(name: 'PROJECT', choices: ['all'] + CFG.projects, description: 'Playwright project (platform)')
-    activeChoice(name: 'FEATURES', choiceType: 'PT_CHECKBOX', filterable: true, filterLength: 1,
-      description: 'Chọn feature cần chạy (bỏ trống = theo GREP / chạy hết). Kết hợp được với GREP, vd chọn feature login + GREP @smoke',
-      script: groovyScript(script: [classpath: [], sandbox: true, script: FEATURE_CHOICES_SCRIPT],
-                           fallbackScript: [classpath: [], sandbox: true, script: 'return [:]']))
-    reactiveChoice(name: 'TC_LIST', choiceType: 'PT_CHECKBOX', filterable: true, filterLength: 1, referencedParameters: 'FEATURES',
-      description: 'Tick TC cụ thể trong các feature đã chọn ở trên (bỏ trống = chạy cả feature)',
-      script: groovyScript(script: [classpath: [], sandbox: true, script: TC_CHOICES_SCRIPT],
-                           fallbackScript: [classpath: [], sandbox: true, script: 'return [:]']))
+    string(name: 'FEATURES', defaultValue: '', description: 'Nhập tag feature, vd: signup hoặc login,signup (phân cách bằng dấu phẩy). Bỏ trống = theo GREP / chạy hết')
+    string(name: 'TC_LIST', defaultValue: '', description: 'Nhập TC cụ thể, vd: signup|TC-001,signup|TC-003 (tag|mã TC). Bỏ trống = chạy cả feature')
     string(name: 'TCS', defaultValue: '', description: 'Gõ tay mã TC, vd: TC-001, TC-003 — ưu tiên hơn mọi lựa chọn khác (dùng khi gọi job qua API)')
     string(name: 'GREP', defaultValue: '', description: 'Lọc theo tag/tên, vd: @smoke | @regression | @login')
     string(name: 'GREP_INVERT', defaultValue: '', description: 'Loại trừ, vd: @slow')
