@@ -13,7 +13,7 @@
 
 // Không có `def`: CFG phải là biến binding thì các hàm helper bên dưới mới thấy được.
 CFG = [
-  agentLabel      : 'any',
+  agentLabel      : 'NTAPP-Imac-Agent',
   dockerImage     : '',
   environments    : ['demoblaze'],
   projects        : ['web-chromium'],
