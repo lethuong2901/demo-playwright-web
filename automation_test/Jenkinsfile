@@ -8,19 +8,18 @@
 // Cấu hình DUY NHẤT cần sửa là khối CFG bên dưới — không sửa stage để bật/tắt tính năng.
 //
 // Plugin cần: Pipeline, Git, Credentials Binding, JUnit, HTML Publisher, Timestamper.
-// Tuỳ chọn: Lockable Resources (androidLockLabel), Docker Pipeline (dockerImage).
+// Tuỳ chọn: Docker Pipeline (dockerImage).
 // =====================================================================================
 
 // Không có `def`: CFG phải là biến binding thì các hàm helper bên dưới mới thấy được.
 CFG = [
   agentLabel      : 'NTAPP-Imac-Agent',
   dockerImage     : '',
-  environments    : ['demoblaze'],
+  environments    : ['staging', 'uat', 'prod'],
   projects        : ['web-chromium'],
   cron            : 'H 16 * * *',                // 4h chiều hàng ngày
   cronGrep        : '',
   envFileCredId   : '',
-  androidLockLabel: '',
   minio           : [
     enabled   : false,
     credId    : '',
@@ -68,36 +67,6 @@ def inRuntime(Closure body) {
 def withEnvFile(Closure body) {
   if (CFG.envFileCredId) {
     withCredentials([file(credentialsId: CFG.envFileCredId, variable: 'AUTOTEST_ENV_FILE')]) { body() }
-  } else {
-    body()
-  }
-}
-
-/**
- * Thiết bị Android cho project android (Lockable Resources):
- *  - ANDROID_DEVICE_URL (link control máy device farm MCloud) → khoá theo serial; fixture tự đăng nhập Keycloak device farm
- *    (VDS_STF_<HOST>_USER/_PASSWORD ở ~/.vds/sdlc-config.env của user chạy agent), tự đăng ký ADB key, mượn máy;
- *  - không nhập → khoá 1 máy cắm tại agent theo label (androidLockLabel), xuất ANDROID_SERIAL.
- */
-/** Serial trong link control STF (…/control/<serial>) để khoá tài nguyên theo máy. */
-def farmSerial() {
-  def url = params.ANDROID_DEVICE_URL?.trim()
-  def m = url ? (url =~ /\/control\/([^\/?#]+)/) : null
-  return (m && m.find()) ? m.group(1) : ''
-}
-
-def withDevice(Closure body) {
-  def url = params.ANDROID_DEVICE_URL?.trim()
-  def onAndroid = selectedProjects().contains('android')
-  if (url && onAndroid) {
-    // Device farm: chỉ cần link control; tài khoản Keycloak device farm đọc từ ~/.vds/sdlc-config.env trên agent (support/stf.ts).
-    lock(resource: "android-farm-${farmSerial()}") {
-      withEnv(["ANDROID_DEVICE_URL=${url}"]) { body() }
-    }
-  } else if (CFG.androidLockLabel && onAndroid) {
-    lock(label: CFG.androidLockLabel, quantity: 1, variable: 'LOCKED_DEVICE') {
-      withEnv(["ANDROID_SERIAL=${env.LOCKED_DEVICE}"]) { body() }
-    }
   } else {
     body()
   }
@@ -210,7 +179,7 @@ def playwrightArgs() {
   if (grep) args << "--grep='${grep.replace("'", "")}'"
   if (params.GREP_INVERT?.trim()) args << "--grep-invert='${params.GREP_INVERT.trim().replace("'", "")}'"
   args << "--retries=${params.RETRIES}"
-  args << (selectedProjects().contains('android') ? '--workers=1' : "--workers=${params.WORKERS}")
+  args << "--workers=${params.WORKERS}"
   return args.join(' ')
 }
 
@@ -227,13 +196,6 @@ def installDeps() {
   sh 'npm run typecheck'
   // Danh mục FEATURES/TC_LIST trên giao diện có cũ hơn bdd/features không — chỉ cảnh báo, không chặn build.
   sh 'if [ -f ci/tc-catalog.ts ]; then npx tsx ci/tc-catalog.ts --check || echo "CẢNH BÁO: danh sách feature/TC trên Jenkins chưa cập nhật — chạy npm run ci:catalog rồi commit Jenkinsfile."; fi'
-}
-
-def downloadApk() {
-  if (params.APK_URL?.trim()) {
-    sh 'mkdir -p results && curl -fsSL "$APK_URL" -o results/app-under-test.apk'
-    env.APK_PATH = "${pwd()}/results/app-under-test.apk"
-  }
 }
 
 // ---------------------------------- pipeline ----------------------------------------
@@ -256,11 +218,9 @@ pipeline {
     string(name: 'TCS', defaultValue: '', description: 'Gõ tay mã TC, vd: TC-001, TC-003 — ưu tiên hơn mọi lựa chọn khác (dùng khi gọi job qua API)')
     string(name: 'GREP', defaultValue: '', description: 'Lọc theo tag/tên, vd: @smoke | @regression | @login')
     string(name: 'GREP_INVERT', defaultValue: '', description: 'Loại trừ, vd: @slow')
-    string(name: 'WORKERS', defaultValue: '4', description: 'Số worker song song (android luôn 1)')
+    string(name: 'WORKERS', defaultValue: '4', description: 'Số worker chạy song song')
     choice(name: 'RETRIES', choices: ['1', '0', '2'], description: 'Retry test fail (pass sau retry = flaky)')
-    choice(name: 'SHARDS', choices: ['1', '2', '3', '4'], description: '>1 = chia test cho nhiều agent cùng label chạy song song (không dùng cho android)')
-    string(name: 'APK_URL', defaultValue: '', description: 'Android: link APK cần cài trước khi chạy (bỏ trống = dùng app đang có trên máy)')
-    string(name: 'ANDROID_DEVICE_URL', defaultValue: '', description: 'Android device farm MCloud: link control, vd http://10.207.247.201/#!/control/<serial>. Agent cần tài khoản Keycloak device farm trong ~/.vds/sdlc-config.env (VDS_STF_<HOST>_USER/_PASSWORD) — tự đăng nhập, tự đăng ký ADB key, mượn máy, kết nối. Bỏ trống = máy cắm tại agent')
+    booleanParam(name: 'HEADLESS', defaultValue: true, description: 'Chạy browser ở chế độ headless (không hiện giao diện)')
     booleanParam(name: 'NOTIFY', defaultValue: true, description: 'Gửi kết quả lên Vops/Telegram')
   }
 
@@ -272,6 +232,7 @@ pipeline {
     TEST_ENV = "${params.ENV ?: CFG.environments[0]}"
     TEST_ACCOUNT = "${(params.ENV ?: CFG.environments[0]).toUpperCase()}_${params.PROJECT ?: 'all'}"
     RUN_TS = "${new Date().format('yyyy_MM_dd_HH_mm_ss')}"
+    HEADLESS = "${params.HEADLESS != false}"
   }
 
   stages {
@@ -280,70 +241,20 @@ pipeline {
         checkout scm
         script {
           currentBuild.description = "${params.ENV.toUpperCase()} · ${params.PROJECT} · ${selectionLabel()}"
-          def farm = farmSerial()
-          if (farm) currentBuild.description += " · farm ${farm}"
         }
       }
     }
 
     stage('Test') {
-      when { expression { params.SHARDS == '1' || selectedProjects().contains('android') } }
       steps {
         dir('automation_test') {
           script {
             inRuntime {
               installDeps()
-              downloadApk()
               withEnvFile {
-                withDevice {
-                  def rc = sh(script: "npx playwright test ${playwrightArgs()}", returnStatus: true)
-                  echo "playwright exit code: ${rc} (fail test → build UNSTABLE qua JUnit, không dừng pipeline)"
-                }
+                def rc = sh(script: "npx playwright test ${playwrightArgs()}", returnStatus: true)
+                echo "playwright exit code: ${rc} (fail test → build UNSTABLE qua JUnit, không dừng pipeline)"
               }
-            }
-          }
-        }
-      }
-    }
-
-    stage('Test (sharded)') {
-      when { expression { params.SHARDS != '1' && !selectedProjects().contains('android') } }
-      steps {
-        script {
-          def total = params.SHARDS as int
-          def branches = [:]
-          for (int i = 1; i <= total; i++) {
-            def shard = i
-            branches["shard ${shard}/${total}"] = {
-              node(CFG.agentLabel) {
-                checkout scm
-                dir('automation_test') {
-                  inRuntime {
-                    installDeps()
-                    withEnvFile {
-                      withEnv(["PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report"]) {
-                        sh(script: "npx playwright test ${playwrightArgs()} --shard=${shard}/${total} --reporter=blob", returnStatus: true)
-                      }
-                    }
-                  }
-                  stash name: "blob-${shard}", includes: 'blob-report/**', allowEmpty: true
-                  stash name: "shots-${shard}", includes: 'results/test-results/**', allowEmpty: true
-                }
-              }
-            }
-          }
-          parallel branches
-          dir('automation_test') {
-            sh 'rm -rf all-blob results && mkdir -p all-blob'
-            for (int i = 1; i <= total; i++) {
-              dir("shard-${i}") { unstash "blob-${i}" }
-              unstash "shots-${i}"
-              sh "cp shard-${i}/blob-report/*.zip all-blob/ 2>/dev/null || true"
-            }
-            inRuntime {
-              installDeps()
-              // Dùng chính playwright.config.ts → cùng bộ reporter (html, junit, json, monocart)
-              sh 'npx playwright merge-reports --config=playwright.config.ts ./all-blob'
             }
           }
         }
