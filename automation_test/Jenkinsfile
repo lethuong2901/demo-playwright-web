@@ -370,6 +370,7 @@ pipeline {
           archiveArtifacts artifacts: 'results/summary.json, results/junit.xml, results/merged_failures.png, results/test-results/**/*.png, results/test-results/**/trace.zip', allowEmptyArchive: true
 
           env.REPORT_URL = "${env.BUILD_URL}Playwright_20Report/"
+          env.MONOCART_URL = "${env.BUILD_URL}Monocart_20Report/"
           if (CFG.minio.enabled) {
             def remote = "${CFG.minio.bucket}/${params.ENV}/${env.TEST_ACCOUNT}/${env.RUN_TS}"
             withCredentials([usernamePassword(credentialsId: CFG.minio.credId, usernameVariable: 'MINIO_ACCESS_KEY', passwordVariable: 'MINIO_SECRET_KEY')]) {
@@ -383,6 +384,7 @@ pipeline {
                 ''')
                 if (rc == 0) {
                   env.REPORT_URL = "http://${CFG.minio.staticHost}/${remote}/index.html"
+                  env.MONOCART_URL = "http://${CFG.minio.staticHost}/${remote}/monocart/index.html"
                   if (fileExists('results/merged_failures.png')) env.SCREENSHOT_URL = "http://${CFG.minio.staticHost}/${remote}/merged_failures.png"
                 } else {
                   echo "MinIO upload lỗi (rc=${rc}) — dùng link report trên Jenkins."
@@ -397,7 +399,14 @@ pipeline {
           def total = parts[0], passed = parts[1], failed = parts[2], skipped = parts[3], knownIssue = parts[4], flaky = parts[5]
           currentBuild.description = "${params.ENV.toUpperCase()} · ${params.PROJECT}<br/>" +
             "TOTAL ${total} · pass ${passed} · fail ${failed} · skip ${skipped} · known-bug ${knownIssue} · flaky ${flaky}<br/>" +
-            "<a href='${env.REPORT_URL}'>Report</a>" + (env.SCREENSHOT_URL ? " · <a href='${env.SCREENSHOT_URL}'>Screenshot</a>" : '')
+            "<a href='${env.REPORT_URL}'>Report</a> · <a href='${env.MONOCART_URL}'>Monocart</a>" + (env.SCREENSHOT_URL ? " · <a href='${env.SCREENSHOT_URL}'>Screenshot</a>" : '')
+
+          echo "=========================================="
+          echo "REPORT LINKS:"
+          echo "  Playwright Report: ${env.REPORT_URL}"
+          echo "  Monocart Report:   ${env.MONOCART_URL}"
+          if (env.SCREENSHOT_URL) echo "  Screenshot:        ${env.SCREENSHOT_URL}"
+          echo "=========================================="
 
           if (params.NOTIFY) {
             def creds = []
