@@ -399,9 +399,8 @@ pipeline {
           def summaryText = sh(script: '''python3 -c "import json; s=json.load(open('results/summary.json')); print(f\\"{s['total']}|{s['passed']}|{s['failed']}|{s['skipped']}|{s.get('knownIssue',0)}|{s.get('flaky',0)}\\")"''', returnStdout: true).trim()
           def parts = summaryText.split('\\|')
           def total = parts[0], passed = parts[1], failed = parts[2], skipped = parts[3], knownIssue = parts[4], flaky = parts[5]
-          currentBuild.description = """${params.ENV.toUpperCase()} · ${params.PROJECT}
-TOTAL ${total} · pass ${passed} · fail ${failed} · skip ${skipped} · known-bug ${knownIssue} · flaky ${flaky}
-<a href="${env.REPORT_URL}">Report</a> · <a href="${env.MONOCART_URL}">Monocart</a>""" + (env.SCREENSHOT_URL ? """ · <a href="${env.SCREENSHOT_URL}">Screenshot</a>""" : '')
+          // Description ngắn gọn - links có sẵn ở sidebar (Playwright Report, Monocart Report)
+          currentBuild.description = "${params.ENV.toUpperCase()} · ${params.PROJECT} | TOTAL ${total} | ✅${passed} ❌${failed} ⏭${skipped}"
 
           echo "=========================================="
           echo "REPORT LINKS:"
