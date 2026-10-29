@@ -312,4 +312,312 @@ automation_test/docs/
 
 ---
 
-*Cập nhật lần cuối: Phiên làm việc hiện tại*
+## 18. Giải thích chi tiết toàn bộ các file trong project (automation_test)
+
+> Mục này giải thích toàn diện tất cả các file trong thư mục `automation_test/` (ngoại trừ thư mục `.claude`, `node_modules`, `.features-gen`, `results`), kèm theo các file tài liệu quan trọng ở thư mục gốc. Mỗi file đều được phân tích theo 3 khía cạnh trọng tâm:
+> 1. **Tại sao lại sinh ra file đấy?**
+> 2. **File đấy được sinh ra từ skill nào? (Reference đến skill & template nguồn)**
+> 3. **File đấy sinh ra để làm gì? (Chức năng, cơ chế hoạt động, liên kết luồng)**
+
+---
+
+### A. NHÓM TÀI LIỆU & ĐẶC TẢ NGHIỆP VỤ (`automation_test/docs/`)
+
+#### 1. `automation_test/docs/global-data.md`
+- **Tại sao lại sinh ra file đấy?**: Trong bất kỳ dự án kiểm thử nào, các dữ liệu dùng chung (như URL trang web, cấu hình màn hình thiết bị, danh sách tên các biến môi trường/credential cần dùng) cần được quy ước trước, tránh việc mỗi tester tự định nghĩa một kiểu.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-project-docs` (Bước 1 trong quy trình AutoTest 5 bước).
+  - **Reference**: `.claude/skills/autotest-project-docs/`
+- **Sinh ra để làm gì?**: 
+  - Khai báo danh mục các biến cấu hình toàn cục: `BASE_URL=https://www.demoblaze.com`, `API_BASE_URL`, danh sách tên biến bí mật (`WEB_USERNAME`, `WEB_PASSWORD`).
+  - Là căn cứ để tạo file `.env.example` và giúp `config/env.ts` biết được các key cần đọc mà không hardcode dữ liệu nhạy cảm vào repository.
+
+#### 2. `automation_test/docs/product-overview.md`
+- **Tại sao lại sinh ra file đấy?**: AI và các thành viên trong đội ngũ phát triển cần hiểu ngữ cảnh kinh doanh (business domain) của ứng dụng web được test trước khi bắt tay viết kịch bản kiểm thử.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-project-docs` (Bước 1).
+  - **Reference**: `.claude/skills/autotest-project-docs/`
+- **Sinh ra để làm gì?**: 
+  - Tóm lược sản phẩm Demoblaze: loại hình ứng dụng (e-commerce demo), các module chức năng chính (Sign up, Log in, Browse catalog, Add to Cart, Place Order), đối tượng người dùng, tech stack mục tiêu.
+  - Làm nguồn tri thức nền tảng (Domain Knowledge) cho các bước tạo kịch bản tiếp theo.
+
+#### 3. `automation_test/docs/features/signup/business-scenario.md`
+- **Tại sao lại sinh ra file đấy?**: Cần một bản đặc tả yêu cầu nghiệp vụ (SRS - Software Requirements Specification) chi tiết cho riêng tính năng Đăng ký (Signup) trước khi thiết kế các ca kiểm thử.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-scenarios` (Bước 2 trong quy trình).
+  - **Reference**: `.claude/skills/autotest-scenarios/`
+- **Sinh ra để làm gì?**:
+  - Mô tả chi tiết: Luồng sự kiện chính (Main Flow), các luồng sự kiện thay thế (Alternative Flows: user đã tồn tại, để trống trường dữ liệu, hủy đăng ký).
+  - Liệt kê bảng định danh các UI Elements (ID của nút `#signin2`, modal `#signInModal`, input `#sign-username`, `#sign-password`). Điều này giúp người viết Page Object sau này tìm đúng locator mà không bị đoán mò.
+
+#### 4. `automation_test/docs/features/signup/test-cases.md`
+- **Tại sao lại sinh ra file đấy?**: Đây là bảng Kịch bản kiểm thử chức năng (KBKTCN) chuẩn QA/Tester, phân rã các yêu cầu nghiệp vụ thành từng ca kiểm thử cụ thể, đo lường được mức độ bao phủ (coverage).
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-scenarios` (Bước 2).
+  - **Reference**: `.claude/skills/autotest-scenarios/`
+- **Sinh ra để làm gì?**:
+  - Định nghĩa 7 Test Case (`TC-001` đến `TC-007`) đầy đủ các cột: Mục đích (D), Dữ liệu kiểm thử (E), Các bước thực hiện (F), Kết quả mong muốn (G), Mức độ ưu tiên/Nghiêm trọng (H/I), và Business Rules.
+  - Là bản thiết kế gốc (Blueprint) để chuyển thể 1-1 thành file kịch bản BDD `signup.feature`.
+
+#### 5. `automation_test/docs/features/signup/strategy.md`
+- **Tại sao lại sinh ra file đấy?**: Cần xác định chiến lược kiểm thử cho tính năng: kiểm thử cái gì, dùng công cụ gì (Web UI hay API, Playwright hay RobotFramework), mức độ ưu tiên chạy ở đâu (CI hay local).
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-strategy` (Bước 3 trong quy trình).
+  - **Reference**: `.claude/skills/autotest-strategy/`
+- **Sinh ra để làm gì?**:
+  - Đánh giá độ khả thi, chọn Playwright BDD làm framework thực thi cho Web UI.
+  - Phân loại Test Suite: gán tag `@smoke` cho TC-001 (kiểm tra nhanh), `@regression` cho TC-003, TC-004, và phân luồng chạy song song hay tuần tự.
+
+---
+
+### B. NHÓM CẤU HÌNH CORE FRAMEWORK & MÔI TRƯỜNG
+
+#### 6. `automation_test/package.json`
+- **Tại sao lại sinh ra file đấy?**: Dự án dùng Node.js/TypeScript nên cần file quản lý dependencies và định nghĩa các lệnh chạy test tự động.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - Khởi tạo hạ tầng dự án qua scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/package.json`
+- **Sinh ra để làm gì?**:
+  - Khai báo các thư viện phụ thuộc: `@playwright/test`, `playwright-bdd`, `typescript`, `dotenv`, `tsx`, `monocart-reporter`.
+  - Cung cấp các npm scripts thông dụng: `npm run bddgen` (sinh spec từ feature), `npm test` (sinh và chạy test), `npm run test:web`, `npm run summary`, `npm run ci:notify`.
+
+#### 7. `automation_test/tsconfig.json`
+- **Tại sao lại sinh ra file đấy?**: Thiết lập trình biên dịch TypeScript và định cấu hình alias path để code ngắn gọn, sạch sẽ, không bị dính đường dẫn tương đối dài ngoằng (`../../../`).
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/tsconfig.json`
+- **Sinh ra để làm gì?**:
+  - Thiết lập module resolution Node, target ES2022.
+  - Khai báo Path Aliases tiện dụng:
+    - `@pages/*` $\rightarrow$ `pages/*`
+    - `@fixtures/*` $\rightarrow$ `fixtures/*`
+    - `@config/*` $\rightarrow$ `config/*`
+
+#### 8. `automation_test/playwright.config.ts`
+- **Tại sao lại sinh ra file đấy?**: Là "trái tim" cấu hình của toàn bộ Playwright Test runner, kết hợp bộ chuyển đổi BDD của `playwright-bdd`.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/playwright.config.ts`
+- **Sinh ra để làm gì?**:
+  - Định nghĩa dự án BDD thông qua `defineBddProject` (đọc feature từ `bdd/features/**/*.feature`, steps từ `bdd/steps/**/*.ts`, sinh code tạm vào `.features-gen`).
+  - Cấu hình Timeout từ `TIMEOUTS` (`config/timeouts.ts`), baseUrl từ `ENV.baseUrl` (`config/env.ts`).
+  - Thiết lập cơ chế chạy: số lượng workers song song, chạy headed/headless, chụp ảnh/video/trace khi test lỗi (`only-on-failure`).
+  - Khai báo các loại báo cáo: console `list`, `html`, `junit`, `json`, và `monocart-reporter`.
+
+#### 9. `automation_test/.env` và `automation_test/.env.example`
+- **Tại sao lại sinh ra file đấy?**: Phân tách mã nguồn khỏi dữ liệu nhạy cảm (Credentials, mật khẩu, API key, token). Tránh việc vô tình push mật khẩu lên Git.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-credentials` và `/autotest-pw-web`.
+  - **Reference**: `.claude/skills/autotest-credentials/`
+- **Sinh ra để làm gì?**:
+  - `.env.example`: File mẫu (được commit vào Git) liệt kê các biến cần có: `BASE_URL`, `TEST_ENV`, `RUN_MODE`, `WEB_USERNAME`, `WEB_PASSWORD`.
+  - `.env`: File thực tế chứa giá trị thật trên máy local hoặc CI (được cấu hình trong `.gitignore` để không bị push lên kho mã nguồn).
+
+#### 10. `automation_test/config/timeouts.ts`
+- **Tại sao lại sinh ra file đấy?**: Tránh việc hardcode các giá trị mili-giây (ví dụ `30000`, `5000`) rải rác trong các test step hay page object.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/config/timeouts.ts`
+- **Sinh ra để làm gì?**:
+  - Cung cấp hằng số `TIMEOUTS` tập trung phân chia thành 3 cấp độ:
+    - `test: 60_000` (60s cho toàn bộ 1 kịch bản).
+    - `navigation: 30_000` & `action: 15_000` (chuyển trang, click, nhập liệu).
+    - `expect: 10_000` (thời gian tối đa chờ một assertion đúng).
+
+#### 11. `automation_test/config/env.ts`
+- **Tại sao lại sinh ra file đấy?**: Đóng vai trò là cổng truy xuất duy nhất (Single Entry Point) cho toàn bộ code TypeScript truy cập vào cấu hình môi trường.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/config/env.ts`
+- **Sinh ra để làm gì?**:
+  - Nạp biến từ `.env` bằng thư viện `dotenv`.
+  - Cung cấp hàm `optionalEnv` (có giá trị fallback nếu thiếu) và `requireEnv` (báo lỗi nếu thiếu secret bắt buộc nhưng không để lộ giá trị secret).
+  - Export các object dùng chung: `ENV` (baseUrl, isCI), `RUN` (chế độ parallel/serial, workers, headed), `CREDENTIALS`.
+
+#### 12. `automation_test/config/storage.ts`
+- **Tại sao lại sinh ra file đấy?**: Hỗ trợ cơ chế lưu và tái sử dụng session đăng nhập (StorageState) của Playwright.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/config/storage.ts`
+- **Sinh ra để làm gì?**:
+  - Định nghĩa đường dẫn lưu file cookies/localStorage JSON theo từng role người dùng (ví dụ: `webUser: '.auth/web-user.json'`).
+  - Giúp các kịch bản cần đăng nhập không phải lặp lại bước gõ user/pass ở mỗi test case, giúp tăng tốc độ kiểm thử đáng kể.
+
+---
+
+### C. NHÓM FIXTURES & QUẢN LÝ CONTEXT (`automation_test/fixtures/`)
+
+#### 13. `automation_test/fixtures/context.fixture.ts`
+- **Tại sao lại sinh ra file đấy?**: Trong BDD Cucumber truyền thống, các bước kiểm thử chia sẻ dữ liệu qua biến `this` (Cucumber World). Tuy nhiên trong Playwright BDD, ta cần một cơ chế chia sẻ state an toàn theo từng kịch bản (Scenario Context).
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/fixtures/context.fixture.ts`
+- **Sinh ra để làm gì?**:
+  - Cung cấp class `ScenarioContext` với các hàm `set(key, value)`, `get(key)`, `has(key)`. Mỗi kịch bản test sẽ được cấp 1 instance `ctx` cô lập.
+  - Ví dụ: Step trước tạo username ngẫu nhiên `ctx.set('username', randomUsername)`, step sau lấy ra để assert hoặc dùng lại.
+
+#### 14. `automation_test/fixtures/web.fixture.ts`
+- **Tại sao lại sinh ra file đấy?**: Cần một Fixture chuyên biệt cho Web UI để tự động khởi tạo đối tượng `POManager` mỗi khi một test bắt đầu chạy.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/fixtures/web.fixture.ts`
+- **Sinh ra để làm gì?**:
+  - Mở rộng Playwright test base bằng cách tiêm `poManager: async ({ page }, use) => use(new POManager(page))`.
+  - Giúp các step definition chỉ cần khai báo `{ poManager }` là có thể truy cập ngay vào tất cả các màn hình mà không cần phải tự tạo instance thủ công.
+
+#### 15. `automation_test/fixtures/index.ts`
+- **Tại sao lại sinh ra file đấy?**: Gom tất cả các fixtures riêng rẽ (`bddBase`, `contextTest`, `webTest`) lại thành một đối tượng `test` và `expect` thống nhất.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/fixtures/index.ts`
+- **Sinh ra để làm gì?**:
+  - Sử dụng hàm `mergeTests` của Playwright để gộp mọi fixture lại với nhau.
+  - Là điểm import duy nhất cho các file step: `import { expect } from '@fixtures/index'`.
+
+---
+
+### D. NHÓM PAGE OBJECT MODEL (`automation_test/pages/`)
+
+#### 16. `automation_test/pages/base/BasePage.ts`
+- **Tại sao lại sinh ra file đấy?**: Tuân thủ nguyên lý kế thừa (OOP) và DRY (Don't Repeat Yourself). Các màn hình web đều có chung một số thao tác cơ bản như: mở trang theo đường dẫn, kiểm tra URL tải trang thành công, lấy text của phần tử.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/pages/base/BasePage.ts`
+- **Sinh ra để làm gì?**:
+  - Là lớp cha trừu tượng (`abstract class BasePage`).
+  - Chứa thuộc tính `page`, thuộc tính `path` và các hàm tiện ích: `open()`, `expectLoaded()`, `textOf(locator)`. Mọi Page Object cụ thể đều kế thừa từ class này.
+
+#### 17. `automation_test/pages/signup/SignupPage.ts`
+- **Tại sao lại sinh ra file đấy?**: Triển khai mô hình Page Object Model cho chức năng Đăng ký (Signup). Tách biệt hoàn toàn phần giao diện (Locators, thao tác DOM) khỏi phần logic kiểm thử (Step definitions).
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - Viết test chức năng dựa trên `business-scenario.md` & `test-cases.md`).
+  - **Reference**: `.claude/skills/autotest-pw-web/`
+- **Sinh ra để làm gì?**:
+  - Quản lý các Locators của trang: `#signin2` (nút mở modal), `#signInModal`, `#sign-username`, `#sign-password`, nút đăng ký trong modal.
+  - Cung cấp các phương thức nghiệp vụ: `clickSignupButton()`, `expectModalVisible()`, `fillUsername()`, `fillPassword()`, `clickSignupButtonInModal()`, `clickCloseButton()`, `expectModalHidden()`, và hàm sinh dữ liệu ngẫu nhiên `generateRandomUsername()`.
+
+#### 18. `automation_test/pages/POManager.ts`
+- **Tại sao lại sinh ra file đấy?**: Áp dụng mẫu thiết kế Factory / Manager Pattern để quản lý tập trung toàn bộ các Page Object của hệ thống.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/pages/POManager.ts` (được cập nhật thêm khi có page mới).
+- **Sinh ra để làm gì?**:
+  - Nhận `page` từ Playwright, khởi tạo sẵn `SignupPage` (và các page khác sau này như `LoginPage`, `CartPage`).
+  - Cung cấp các hàm getter như `getSignupPage()`, giúp step definition gọi trực tiếp mà không cần khởi tạo lại nhiều lần.
+
+---
+
+### E. NHÓM BDD GHERKIN & STEP DEFINITIONS (`automation_test/bdd/`)
+
+#### 19. `automation_test/bdd/features/signup.feature`
+- **Tại sao lại sinh ra file đấy?**: Đặc tả các kịch bản kiểm thử dưới dạng ngôn ngữ tự nhiên (Gherkin tiếng Việt: Given, When, Then) để các bên liên quan (BA, Product Owner, QA, Dev) đều có thể đọc, hiểu và nghiệm thu.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - Chuyển thể từ `test-cases.md`).
+  - **Reference**: `.claude/skills/autotest-pw-web/`
+- **Sinh ra để làm gì?**:
+  - Khai báo 7 kịch bản từ `TC-001` đến `TC-007` của chức năng Đăng ký tài khoản Demoblaze.
+  - Phân loại bằng các Tag (`@web`, `@signup`, `@smoke`, `@regression`, `@happy-path`, `@negative`) để Playwright có thể chọn lọc kịch bản khi chạy qua CLI.
+
+#### 20. `automation_test/bdd/steps/bdd.ts`
+- **Tại sao lại sinh ra file đấy?**: Là cầu nối tích hợp giữa thư viện `playwright-bdd` và hệ thống fixtures riêng của dự án.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/bdd/steps/bdd.ts`
+- **Sinh ra để làm gì?**:
+  - Gọi hàm `createBdd(test)` (sử dụng fixture gộp từ `fixtures/index.ts`).
+  - Xuất khẩu (export) các từ khóa BDD: `Given`, `When`, `Then`, `Before`, `After` để các file step definition khác import vào sử dụng.
+
+#### 21. `automation_test/bdd/steps/signup.steps.ts`
+- **Tại sao lại sinh ra file đấy?**: Hiện thực hóa (implement) hành động kỹ thuật phía sau từng câu lệnh tiếng Việt trong file `signup.feature`.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4).
+  - **Reference**: `.claude/skills/autotest-pw-web/`
+- **Sinh ra để làm gì?**:
+  - Ánh xạ các câu:
+    - `Given('người dùng truy cập trang chủ Demoblaze')` $\rightarrow$ gọi `poManager.getSignupPage().open()`.
+    - `When('người dùng nhập username ngẫu nhiên')` $\rightarrow$ sinh username ngẫu nhiên và lưu vào `ctx.set('username', ...)`.
+    - `When('người dùng click nút Sign up trong popup')` $\rightarrow$ lắng nghe sự kiện browser `page.once('dialog')`, click nút, tự động accept dialog và lưu nội dung alert vào context.
+    - `Then('alert hiển thị với message {string}')` $\rightarrow$ lấy nội dung alert từ context ra assert với giá trị kỳ vọng.
+
+#### 22. `automation_test/bdd/steps/common/common.steps.ts`
+- **Tại sao lại sinh ra file đấy?**: Chứa các bước kiểm thử dùng chung giữa nhiều tính năng khác nhau, tránh lặp lại code trong từng feature riêng lẻ.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/bdd/steps/common/common.steps.ts`
+- **Sinh ra để làm gì?**:
+  - Định nghĩa các step kiểm tra chung, ví dụ: `Then('hiển thị thông báo {string}', async ({ page }, message) => ...)` giúp tái sử dụng cho mọi màn hình.
+
+---
+
+### F. NHÓM CI/CD, THÔNG BÁO & BÁO CÁO (`automation_test/ci/` & Pipeline)
+
+#### 23. `automation_test/Jenkinsfile`
+- **Tại sao lại sinh ra file đấy?**: Tự động hóa quá trình kiểm thử trong quy trình tích hợp liên tục (CI/CD), tự động kích hoạt khi có commit mới hoặc chạy theo lịch hẹn.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-jenkins` (Bước 5 trong quy trình AutoTest 5 bước).
+  - **Reference**: `.claude/skills/autotest-pw-jenkins/`
+- **Sinh ra để làm gì?**:
+  - Định nghĩa pipeline chạy trên Jenkins agent gồm các stage: Checkout mã nguồn, Cài đặt dependencies (`npm install`), Chuyển đổi BDD (`npm run bddgen`), Thực thi Playwright test, Tổng hợp báo cáo kết quả, Publish HTML Report, Ghép ảnh lỗi và Gửi thông báo đến chat group.
+
+#### 24. `automation_test/ci/summarize.ts`
+- **Tại sao lại sinh ra file đấy?**: File kết quả thô của Playwright (`results/results.json`) rất lớn và phức tạp. Cần một script rút gọn dữ liệu thành bản tóm tắt ngắn gọn.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/ci/summarize.ts`
+- **Sinh ra để làm gì?**:
+  - Đọc `results/results.json`, trích xuất số lượng: tổng số test, số test passed, failed, flaky, skipped.
+  - Liệt kê danh sách các ca lỗi kèm theo thông tin mã TC, đường dẫn ảnh chụp màn hình bị fail và trace file; xuất ra file `results/summary.json`.
+
+#### 25. `automation_test/ci/collage.ts`
+- **Tại sao lại sinh ra file đấy?**: Khi có nhiều test case bị fail, việc xem từng ảnh screenshot riêng lẻ rất mất thời gian.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/ci/collage.ts`
+- **Sinh ra để làm gì?**:
+  - Sử dụng chính trình duyệt Chromium headless của Playwright để kết xuất một trang HTML lưới (Grid) ghép tối đa 12 ảnh screenshot lỗi lại thành 1 ảnh duy nhất (`results/merged_failures.png`) có gắn nhãn mã Test Case. Không cần cài thêm thư viện xử lý ảnh nặng nề như Sharp hay Pillow.
+
+#### 26. `automation_test/ci/notify.ts`
+- **Tại sao lại sinh ra file đấy?**: Cần bắn kết quả chạy test tự động lên các kênh chat của dự án (Telegram, Vops Viettel) ngay khi build hoàn tất.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/ci/notify.ts`
+- **Sinh ra để làm gì?**:
+  - Đọc dữ liệu từ `results/summary.json`, định dạng thành tin nhắn tóm tắt đẹp mắt (gồm số lượng pass/fail, tỷ lệ phần trăm, link xem HTML report).
+  - Đính kèm ảnh lưới lỗi `merged_failures.png` và gửi qua Bot Telegram hoặc webhook Vops. Đảm bảo bảo mật token (đọc từ biến môi trường của Jenkins).
+
+#### 27. `automation_test/ci/tc-catalog.ts`
+- **Tại sao lại sinh ra file đấy?**: Cần có một công cụ tự động quét mã nguồn để tổng hợp danh mục toàn bộ các Test Case hiện có trong dự án thành một bảng theo dõi tập trung.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-pw-web` (Bước 4 - scaffold core).
+  - **Reference**: `.claude/skills/autotest-pw-web/templates/core/ci/tc-catalog.ts`
+- **Sinh ra để làm gì?**:
+  - Quét qua toàn bộ các file `.feature` và `.md` trong thư mục `docs/features/`.
+  - Đối chiếu mã TC, tiêu đề, tag và xuất ra bảng danh mục test cases giúp quản lý tiến độ và độ bao phủ của dự án.
+
+#### 28. `automation_test/python_lib/env_secrets.py`
+- **Tại sao lại sinh ra file đấy?**: Cung cấp cơ chế nạp biến môi trường/credentials cho các công cụ phụ trợ hoặc dự án lai hỗ trợ Robot Framework/Python.
+- **Sinh ra từ skill nào?**:
+  - **Skill**: `/autotest-credentials` (quản lý credential).
+  - **Reference**: `.claude/skills/autotest-credentials/`
+- **Sinh ra để làm gì?**:
+  - Phân tích file `.env` và biến môi trường của hệ điều hành, ưu tiên thứ tự nạp an toàn và trả về dictionary biến cấu hình cho các script Python trong pipeline.
+
+---
+
+### G. CÁC FILE TÀI LIỆU Ở THƯ MỤC GỐC REPO
+
+#### 29. `DEMO-TECH-TALK.md`
+- **Tại sao & sinh ra từ đâu?**: File kịch bản chuẩn bị cho buổi Tech Talk/Demo chia sẻ kiến thức về giải pháp Playwright BDD trong nội bộ đội ngũ.
+- **Sinh ra để làm gì?**: Hướng dẫn chi tiết từng bước demo trực tiếp: từ kiểm tra domain doc, chạy bddgen, chạy test headed, xem báo cáo Monocart đến kích hoạt pipeline.
+
+#### 30. `CONTEXT.md`
+- **Tại sao & sinh ra từ đâu?**: File tóm tắt ngữ cảnh hoạt động của dự án.
+- **Sinh ra để làm gì?**: Giúp các công cụ AI (như Antigravity/Claude) khi mở workspace có thể nắm bắt ngay quy tắc kiến trúc và các câu lệnh quan trọng của dự án.
+
+#### 31. `README`
+- **Tại sao & sinh ra từ đâu?**: Tài liệu hướng dẫn sử dụng chính của kho mã nguồn.
+- **Sinh ra để làm gì?**: Hướng dẫn cài đặt môi trường (`Node >= 20`), cài đặt thư viện (`npm install`), các câu lệnh chạy test, debug và xem báo cáo kiểm thử.
+
+---
+
+*Cập nhật lần cuối: Đã bổ sung mục 18 giải thích chi tiết toàn bộ các file trong project.*
