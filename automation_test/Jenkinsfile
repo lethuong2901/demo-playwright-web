@@ -311,7 +311,7 @@ pipeline {
           def parts = summaryText.split('\\|')
           def total = parts[0], passed = parts[1], failed = parts[2], skipped = parts[3], knownIssue = parts[4], flaky = parts[5]
           // Description với link report
-          currentBuild.description = "${params.ENV.toUpperCase()} · ${params.BROWSER} | TOTAL ${total} | ✅${passed} ❌${failed} ⏭${skipped}<br/><a href='${env.REPORT_URL}'>Report</a> · <a href='${env.MONOCART_URL}'>Monocart</a>"
+          currentBuild.description = "${params.ENV.toUpperCase()} · ${params.BROWSER} | TOTAL ${total} | ✅${passed} ❌${failed} ⏭${skipped}<br/><a href='${env.MONOCART_URL}'>Monocart Report</a>"
 
           echo "=========================================="
           echo "REPORT LINKS:"
