@@ -1,6 +1,6 @@
 ---
 name: autotest-pw-jenkins
-description: Create or update the Jenkins CI/CD pipeline for the Playwright TypeScript Cucumber/BDD framework (web, API, Android) — declarative Jenkinsfile configured by one CFG block, bddgen step, Jenkins credentials instead of literals, JUnit/Playwright HTML/Monocart/MinIO reports, sharding, Android device lock, Vops/Telegram notifications in the team's existing format, optional job creation via Jenkins API. New structure replacing the RF autotest-rf-jenkins pattern for Playwright projects.
+description: Create or update the Jenkins CI/CD pipeline for the Playwright TypeScript Cucumber/BDD framework (web) — declarative Jenkinsfile configured by one CFG block, bddgen step, Jenkins credentials instead of literals, JUnit/Playwright HTML/Monocart/MinIO reports, Vops/Telegram notifications in the team's existing format, optional job creation via Jenkins API.
 argument-hint: "tạo pipeline Jenkins | thêm môi trường uat | đổi lịch chạy | bật Telegram"
 ---
 
@@ -8,8 +8,8 @@ argument-hint: "tạo pipeline Jenkins | thêm môi trường uat | đổi lịc
 
 > **Windows:** gọi `python` (hoặc `py -3`) thay cho `python3` — trên Windows `python3` thường trỏ tới bản giả của Microsoft Store. Claude Code trên Windows chạy lệnh qua Git Bash nên `&&`, `mkdir -p`, `/dev/null` vẫn dùng được; người dùng tự gõ trong PowerShell 5.1 thì tách từng lệnh (không `&&`, không `\` nối dòng).
 
-You are a **DevOps/QA Automation Engineer** setting up Jenkins for the Playwright framework in
-`automation_test/` (created by autotest-pw-web / -api / -android).
+You are a **DevOps/QA Automation Engineer** setting up Jenkins for the Playwright web testing framework in
+`automation_test/` (created by autotest-pw-web).
 
 > **Important:** run inside the **target project directory**, not the skills template repo.
 > **Ngôn ngữ giao tiếp:** tiếng Việt, giữ nguyên thuật ngữ kỹ thuật. **Commit** chỉ khi user yêu cầu.
@@ -48,8 +48,8 @@ python3 .claude/skills/autotest-pw-web/scripts/pw_scaffold.py state
   - contains `CFG = [` and `npx playwright test` → ours → **Mode B** (unless the user asked to recreate).
   - otherwise (RF pipeline: `robot`, `python3 automation_test/config/`) → ask:
     > Đã có `automation_test/Jenkinsfile` của pipeline Robot Framework. **1** — Tạo pipeline Playwright riêng ở `automation_test/Jenkinsfile.playwright` (job Jenkins mới trỏ `scriptPath` vào file này, pipeline RF giữ nguyên) · **2** — Thay thế (chỉ khi project đã bỏ RF; file cũ được đổi tên `Jenkinsfile.rf.bak`)
-- Read `playwright.config.ts` → list of projects (exclude `setup`), `package-lock.json` → exact
-  `@playwright/test` version (for the Docker image tag), `docs/global-data.md` → environments.
+- Read `package-lock.json` → exact `@playwright/test` version (for the Docker image tag),
+  `docs/global-data.md` → environments (mặc định: staging, uat, production).
 
 ---
 
@@ -57,13 +57,12 @@ python3 .claude/skills/autotest-pw-web/scripts/pw_scaffold.py state
 
 ### A1. One message with all questions (pre-fill what was detected; user answers only what changes)
 > Mình sẽ tạo pipeline Jenkins cho Playwright. Kiểm tra/điền giúp (không gửi token/mật khẩu — chỉ **ID credential** trên Jenkins):
-> **1. Chạy ở đâu** — Agent label? Chạy trong Docker image `mcr.microsoft.com/playwright:v<version>-noble` (cần Docker Pipeline + docker trên agent; không dùng cho Android) hay chạy thẳng trên agent (Node ≥ 20)?
-> **2. Phạm vi** — Projects đưa vào pipeline: `<detected list>`. Môi trường: `<detected or ask>` (cái đầu tiên là mặc định cho lịch chạy).
+> **1. Chạy ở đâu** — Agent label? Chạy trong Docker image `mcr.microsoft.com/playwright:v<version>-noble` (cần Docker Pipeline + docker trên agent) hay chạy thẳng trên agent (Node ≥ 20)?
+> **2. Môi trường** — Danh sách môi trường: `staging, uat, production` (cái đầu tiên là mặc định cho lịch chạy).
 > **3. Lịch chạy** — Có chạy định kỳ không? (vd "8h tối thứ 2–6, chỉ @regression") — bỏ trống = không.
 > **4. Credential chạy test** — ID credential *Secret file* chứa `automation_test/.env` (gợi ý `<project>-autotest-env`), hoặc "agent tự có .env".
 > **5. Report** — Playwright HTML + Monocart report luôn có (không cần hỏi). Lưu report lên MinIO — có/không; nếu có: upload host, static host, bucket, ID credential (*Username with password*: access key / secret key).
 > **6. Thông báo** — Vops: ID credential (*Username with password*: X-User-Id / X-Auth-Token), room id, link group · Telegram: ID credential (*Secret text*: bot token), chat id · Link kịch bản/test management (tuỳ chọn). Bỏ trống kênh nào = tắt kênh đó.
-> **7. Android** (nếu có project android) — máy cắm tại agent: label Lockable Resources của thiết bị (tên resource = adb serial), hoặc "không khoá". Device farm MCloud không cần cấu hình gì trong Jenkinsfile: mỗi build người chạy nhập link control máy farm ở tham số `ANDROID_DEVICE_URL`; agent cần tài khoản Keycloak device farm `VDS_STF_<HOST>_USER`/`_PASSWORD` trong `~/.vds/sdlc-config.env` của user chạy Jenkins (ADB key tự đăng ký).
 
 Convert natural-language schedules to Jenkins cron with `H` (e.g. "8h tối thứ 2–6" → `H 20 * * 1-5`),
 show the cron back in the summary.
@@ -79,11 +78,10 @@ yourself instead; `ci/notify.ts` + `ci/tc-catalog.ts` are still created by the s
 |---|---|
 | `__AGENT_LABEL__` | agent label |
 | `__DOCKER_IMAGE__` | `mcr.microsoft.com/playwright:v<exact version>-noble` or `''` |
-| `__ENVIRONMENTS__` | `'staging', 'uat'` (quoted, comma-separated) |
-| `__PROJECTS__` | `'web-chromium', 'api'` (from playwright.config.ts) |
+| `__ENVIRONMENTS__` | `'staging', 'uat', 'production'` (quoted, comma-separated) |
+| `__BROWSERS__` | `'chromium', 'firefox', 'webkit'` (browsers người dùng chọn khi chạy) |
 | `__CRON__` / `__CRON_GREP__` | cron or `''` / tag or `''` |
 | `__ENV_FILE_CRED_ID__` | Secret file ID or `''` |
-| `__ANDROID_LOCK_LABEL__` | label or `''` |
 | `__MINIO_ENABLED__` + `__MINIO_*__` | `true/false`, hosts, bucket, cred ID (`''` when disabled) |
 | `__VOPS_*__`, `__TELEGRAM_*__`, `__SCENARIO_LINK__` | IDs / non-secret values or `''` |
 
@@ -139,19 +137,12 @@ Read the Jenkinsfile, map the request to `CFG` keys, show a diff, write after co
 |---|---|
 | thêm/xoá môi trường | `environments` (first = cron default) |
 | đổi lịch / tag chạy định kỳ | `cron`, `cronGrep` (several schedules → parameterizedCron, jenkins-design §4) |
-| thêm project (vd android) | `projects` + `androidLockLabel` |
+| thêm/xoá browser | `browsers` (chromium, firefox, webkit) |
 | bật/tắt MinIO, đổi bucket/host | `minio.*` |
 | bật/tắt/đổi Vops, Telegram, link kịch bản | `notify.*` (token đổi → user cập nhật credential trên Jenkins, không sửa file) |
 | đổi agent / docker image / Playwright version | `agentLabel`, `dockerImage` (tag must equal package-lock version) |
 | đổi credential .env | `envFileCredId` |
 | đồng bộ / cập nhật danh sách feature, TC trên Jenkins | `npm run ci:catalog` (rewrites only the `TC_CATALOG` block — never edit it by hand) |
-
-**Old Jenkinsfile still has the `ANDROID_REMOTE_ADB` parameter** (made before the single farm mode): always fix it,
-even when the request is about something else — that mode no longer exists in `support/stf.ts`. Take from the
-current `templates/Jenkinsfile.txt` the `ANDROID_DEVICE_URL` parameter, `farmSerial()` and `withDevice` (farm lock
-`android-farm-<serial>` / label / local), drop `ANDROID_REMOTE_ADB` + `farmAddress()`, keep the project's `CFG`
-block untouched; show the diff, write after confirmation, remind that the agent's Jenkins user needs
-`VDS_STF_<HOST>_USER`/`_PASSWORD` in its `~/.vds/sdlc-config.env`.
 
 Changes outside `CFG` (new stage, new param) → explain it is a template change; if the user insists,
 edit carefully, keep `post { always }` intact, and mention it so the template can be updated later.
@@ -160,5 +151,45 @@ Re-run A3 validation after any change.
 ## Final report (tiếng Việt)
 Files created/changed, the filled CFG summary (no secrets), validation results (typecheck, dry-run preview,
 linter or "chưa validate trên Jenkins"), checklist of credentials/plugins the user must create, job URL
-(A5) and how to run: *Build with Parameters* → `ENV`, `PROJECT`, tick `FEATURES` (and `TC_LIST` for single
+(A5) and how to run: *Build with Parameters* → `ENV`, `BROWSER`, tick `FEATURES` (and `TC_LIST` for single
 TCs) or type `TCS`/`GREP`. Plugin **Active Choices** must be installed (checklist).
+
+---
+
+## Parameters Reference
+
+### Tham số CFG (DevOps cấu hình 1 lần)
+
+| Tham số | Bắt buộc | Mô tả | Ví dụ |
+|---------|----------|-------|-------|
+| `agentLabel` | ✅ | Label của Jenkins agent | `'NTAPP-Imac-Agent'` |
+| `dockerImage` | ⚪ | Docker image (rỗng = chạy trên agent) | `'mcr.microsoft.com/playwright:v1.40.0-noble'` |
+| `environments` | ✅ | Danh sách môi trường | `['staging', 'uat', 'production']` |
+| `browsers` | ✅ | Browsers cho người dùng chọn | `['chromium', 'firefox', 'webkit']` |
+| `cron` | ⚪ | Lịch chạy tự động | `'H 16 * * *'` (4h chiều) |
+| `cronGrep` | ⚪ | Tag mặc định khi chạy theo lịch | `'@regression'` |
+| `envFileCredId` | ⚪ | Credential ID cho file .env | `'myproject-autotest-env'` |
+| `minio.*` | ⚪ | Upload report lên MinIO | xem bảng minio |
+| `notify.*` | ⚪ | Cấu hình Vops/Telegram | xem bảng notify |
+
+### Tham số người dùng chọn khi Build with Parameters
+
+| Tham số | Loại | Default | Mô tả |
+|---------|------|---------|-------|
+| `ENV` | choice | Đầu tiên trong `environments` | Môi trường chạy test |
+| `BROWSER` | choice | `all` / từ `browsers` | Browser để chạy (chromium/firefox/webkit) |
+| `FEATURES` | string | `''` | Tag feature, vd: `signup,login` |
+| `TC_LIST` | string | `''` | TC cụ thể, vd: `signup\|TC-001` |
+| `TCS` | string | `''` | Gõ tay mã TC (ưu tiên cao nhất) |
+| `GREP` | string | `''` | Lọc theo tag (@smoke, @regression) |
+| `GREP_INVERT` | string | `''` | Loại trừ (@slow, @skip) |
+| `WORKERS` | string | `'4'` | Số worker chạy song song |
+| `RETRIES` | choice | `'1'` | Số lần retry (0/1/2) |
+| `HEADLESS` | boolean | `true` | Chạy browser không hiện giao diện |
+| `NOTIFY` | boolean | `true` | Gửi kết quả lên Vops/Telegram |
+
+### Thứ tự ưu tiên lọc test
+
+```
+TCS (gõ tay) > TC_LIST (tick TC) > FEATURES+GREP > GREP > cronGrep
+```

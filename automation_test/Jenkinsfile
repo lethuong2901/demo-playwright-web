@@ -15,8 +15,8 @@
 CFG = [
   agentLabel      : 'NTAPP-Imac-Agent',
   dockerImage     : '',
-  environments    : ['staging', 'uat', 'prod'],
-  projects        : ['web-chromium'],
+  environments    : ['staging', 'uat', 'production'],
+  browsers        : ['chromium', 'firefox', 'webkit'],
   cron            : 'H 16 * * *',                // 4h chiều hàng ngày
   cronGrep        : '',
   envFileCredId   : '',
@@ -168,13 +168,13 @@ def selectionLabel() {
   return params.GREP?.trim() ?: (isTimerBuild() ? CFG.cronGrep : 'all')
 }
 
-def selectedProjects() {
-  return params.PROJECT == 'all' ? CFG.projects : [params.PROJECT]
+def selectedBrowsers() {
+  return params.BROWSER == 'all' ? CFG.browsers : [params.BROWSER]
 }
 
 /** Chuỗi tham số dòng lệnh Playwright — mọi giá trị người dùng nhập đều được quote. */
 def playwrightArgs() {
-  def args = selectedProjects().collect { "--project='${it}'" }
+  def args = selectedBrowsers().collect { "--project='${it}'" }
   def grep = selectionGrep()
   if (grep) args << "--grep='${grep.replace("'", "")}'"
   if (params.GREP_INVERT?.trim()) args << "--grep-invert='${params.GREP_INVERT.trim().replace("'", "")}'"
@@ -211,8 +211,8 @@ pipeline {
   }
 
   parameters {
-    choice(name: 'ENV', choices: CFG.environments, description: 'Môi trường chạy test')
-    choice(name: 'PROJECT', choices: ['all'] + CFG.projects, description: 'Playwright project (platform)')
+    choice(name: 'ENV', choices: CFG.environments, description: 'Môi trường chạy test (staging/uat/production)')
+    choice(name: 'BROWSER', choices: ['all'] + CFG.browsers, description: 'Browser để chạy test (chromium/firefox/webkit)')
     string(name: 'FEATURES', defaultValue: '', description: 'Nhập tag feature, vd: signup hoặc login,signup (phân cách bằng dấu phẩy). Bỏ trống = theo GREP / chạy hết')
     string(name: 'TC_LIST', defaultValue: '', description: 'Nhập TC cụ thể, vd: signup|TC-001,signup|TC-003 (tag|mã TC). Bỏ trống = chạy cả feature')
     string(name: 'TCS', defaultValue: '', description: 'Gõ tay mã TC, vd: TC-001, TC-003 — ưu tiên hơn mọi lựa chọn khác (dùng khi gọi job qua API)')
@@ -230,7 +230,7 @@ pipeline {
     PATH = "/opt/homebrew/bin:/usr/local/bin:${env.PATH}"
     CI = 'true'
     TEST_ENV = "${params.ENV ?: CFG.environments[0]}"
-    TEST_ACCOUNT = "${(params.ENV ?: CFG.environments[0]).toUpperCase()}_${params.PROJECT ?: 'all'}"
+    TEST_ACCOUNT = "${(params.ENV ?: CFG.environments[0]).toUpperCase()}_${params.BROWSER ?: 'all'}"
     RUN_TS = "${new Date().format('yyyy_MM_dd_HH_mm_ss')}"
     HEADLESS = "${params.HEADLESS != false}"
   }
@@ -240,7 +240,7 @@ pipeline {
       steps {
         checkout scm
         script {
-          currentBuild.description = "${params.ENV.toUpperCase()} · ${params.PROJECT} · ${selectionLabel()}"
+          currentBuild.description = "${params.ENV.toUpperCase()} · ${params.BROWSER} · ${selectionLabel()}"
         }
       }
     }
@@ -311,7 +311,7 @@ pipeline {
           def parts = summaryText.split('\\|')
           def total = parts[0], passed = parts[1], failed = parts[2], skipped = parts[3], knownIssue = parts[4], flaky = parts[5]
           // Description với link report
-          currentBuild.description = "${params.ENV.toUpperCase()} · ${params.PROJECT} | TOTAL ${total} | ✅${passed} ❌${failed} ⏭${skipped}<br/><a href='${env.REPORT_URL}'>Report</a> · <a href='${env.MONOCART_URL}'>Monocart</a>"
+          currentBuild.description = "${params.ENV.toUpperCase()} · ${params.BROWSER} | TOTAL ${total} | ✅${passed} ❌${failed} ⏭${skipped}<br/><a href='${env.REPORT_URL}'>Report</a> · <a href='${env.MONOCART_URL}'>Monocart</a>"
 
           echo "=========================================="
           echo "REPORT LINKS:"
